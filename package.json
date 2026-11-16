@@ -1,6 +1,6 @@
 {
   "name": "x402-lens-monorepo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "x402-lens — observability SDK + debugger for x402 v2 payments",
   "license": "MIT",
@@ -24,7 +24,8 @@
     "check:pack": "node scripts/check-package-contents.mjs",
     "fixtures:record": "tsx scripts/record-fixtures.mjs",
     "test:mutation": "stryker run",
-    "release": "npm run typecheck && npm test && npm run build && npm run check:dist && npm run check:pack"
+    "release": "npm run check:versions && npm run typecheck && npm test && npm run build && npm run check:dist && npm run check:pack",
+    "publish:npm": "node scripts/publish.mjs"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^8.7.1",

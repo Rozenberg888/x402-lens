@@ -5,6 +5,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] — 2026-11-17
+
 ### Added
 
 - Ready-made exporters: `prometheusSink` / `prometheusHandler`,
@@ -14,8 +18,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `settlement_pending` (EVM + Solana public RPCs).
 - `settlement_failed` finding code for terminal settle errors (was incorrectly
   labelled `settlement_pending`).
+- Scheme `upto` (EVM + Solana) with flow rules enforced at config time.
 - Chaos, property (`fast-check`), load-overhead, exporter, reconcile, and CLI
   snapshot tests.
+- `npm run publish:npm` — ordered publish (core → express → cli).
 
 ### Fixed
 

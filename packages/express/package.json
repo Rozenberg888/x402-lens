@@ -1,8 +1,17 @@
 {
   "name": "@x402-lens/express",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Express integration for x402-lens: x402 v2 payments with explainable observability",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rozenberg888/x402-lens.git",
+    "directory": "packages/express"
+  },
+  "homepage": "https://github.com/Rozenberg888/x402-lens#readme",
+  "bugs": {
+    "url": "https://github.com/Rozenberg888/x402-lens/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -27,7 +36,7 @@
     "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
   },
   "dependencies": {
-    "@x402-lens/core": "0.1.0",
+    "@x402-lens/core": "0.2.0",
     "@x402/core": "^2.31.0",
     "@x402/evm": "^2.31.0",
     "@x402/express": "^2.31.0",

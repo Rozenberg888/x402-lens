@@ -1,8 +1,17 @@
 {
   "name": "@x402-lens/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework-agnostic core for x402-lens: payment events, findings engine, config",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rozenberg888/x402-lens.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Rozenberg888/x402-lens#readme",
+  "bugs": {
+    "url": "https://github.com/Rozenberg888/x402-lens/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

@@ -1,8 +1,17 @@
 {
   "name": "x402-lens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI for x402-lens: inspect x402 v2 endpoints, explain failed payments, audit facilitator config",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rozenberg888/x402-lens.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Rozenberg888/x402-lens#readme",
+  "bugs": {
+    "url": "https://github.com/Rozenberg888/x402-lens/issues"
+  },
   "type": "module",
   "bin": {
     "x402-lens": "./dist/index.js"
@@ -20,7 +29,7 @@
     "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
   },
   "dependencies": {
-    "@x402-lens/core": "0.1.0",
+    "@x402-lens/core": "0.2.0",
     "@x402/core": "^2.31.0"
   },
   "keywords": [

@@ -83,9 +83,14 @@ inspection needs the Solana SDK and is out of scope by design.
 
 ## Stage 3 — Publish and get real feedback
 
+- [x] **GitHub remote, public.** `https://github.com/Rozenberg888/x402-lens`.
+      CI green on all six matrix jobs. The first run failed the packaging job
+      because the script assumed npm's Windows layout — fixed by discovering the
+      path instead, which is exactly the class of bug CI exists to find.
 - [ ] npm organisation `@x402-lens`, verify names are free, publish in dependency
-      order: core → express → cli.
-- [ ] GitHub remote, README with copy-paste examples that were actually run.
+      order: core → express → cli. **Deferred by decision** — the names are free
+      (`npm view` returns 404 for both) and no npm session exists yet.
+- [ ] README with copy-paste examples that were actually run.
 - [ ] 10–20 real users. Goal is not revenue, it is learning what hurts.
 
 **Exit criterion:** at least three people outside the project have integrated it,

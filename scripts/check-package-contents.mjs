@@ -9,22 +9,54 @@
  */
 
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const ROOT = resolve(import.meta.dirname, "..");
+const NPM_CLI = await findNpmCli();
 
 /**
- * Path to npm's CLI entry point.
+ * Locate npm's CLI entry point across installations.
  *
- * `npm` on Windows is a `.cmd` shim, which `execFile` cannot spawn directly
- * (`ENOENT`), and shelling out would mean quoting every argument. Running the
- * JavaScript entry point with the current Node binary works on every platform
- * and keeps the argument list out of a shell.
+ * `npm` on Windows is a `.cmd` shim that `execFile` cannot spawn (`ENOENT`), and
+ * shelling out would mean quoting every argument. Running the JavaScript entry
+ * point with the current Node binary avoids both — but its location differs:
+ * Windows bundles npm under the Node directory, while Linux (including the
+ * `/opt/hostedtoolcache` layout on GitHub runners) installs it separately, so
+ * the path has to be discovered rather than assumed.
+ *
+ * @returns {Promise<string | undefined>} Absolute path, or undefined when not found
  */
-const NPM_CLI = resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+async function findNpmCli() {
+  const candidates = [
+    resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+    resolve(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+    "/usr/lib/node_modules/npm/bin/npm-cli.js",
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.R_OK);
+      return candidate;
+    } catch {
+      // Try the next location.
+    }
+  }
+
+  // Last resort: ask npm where it is, which works wherever it is on PATH.
+  try {
+    const { stdout } = await run("npm", ["root", "-g"]);
+    const candidate = resolve(stdout.trim(), "npm", "bin", "npm-cli.js");
+    await access(candidate, constants.R_OK);
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Run `npm pack --dry-run --json` in a directory.
@@ -33,10 +65,16 @@ const NPM_CLI = resolve(dirname(process.execPath), "node_modules", "npm", "bin",
  * @returns {Promise<object>} Parsed pack metadata
  */
 async function packInfo(cwd) {
-  const { stdout } = await run(process.execPath, [NPM_CLI, "pack", "--dry-run", "--json"], {
-    cwd,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  if (!NPM_CLI) {
+    throw new Error(
+      "could not locate npm-cli.js in any known location or via `npm root -g`",
+    );
+  }
+  const { stdout } = await run(
+    process.execPath,
+    [NPM_CLI, "pack", "--dry-run", "--json"],
+    { cwd, maxBuffer: 10 * 1024 * 1024 },
+  );
   const [info] = JSON.parse(stdout);
   return info;
 }

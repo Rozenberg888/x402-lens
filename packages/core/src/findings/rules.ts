@@ -18,6 +18,7 @@ import { describeNetwork, suggestCaip2, isCaip2 } from "../networks.js";
 import {
   asEvmExactPayload,
   isAtomicAmount,
+  isSolanaAddress,
   type WirePaymentPayload,
   type WirePaymentRequired,
   type WirePaymentRequirements,
@@ -52,6 +53,7 @@ const SEVERITY_ORDER: Record<Finding["severity"], number> = {
  * @returns Ordered findings; empty when nothing is wrong
  */
 export function diagnose(input: DiagnosisInput): Finding[] {
+  const { paymentRequired } = input;
   const findings: Finding[] = [
     ...checkX402Version(input),
     ...checkAccepts(input),
@@ -59,6 +61,7 @@ export function diagnose(input: DiagnosisInput): Finding[] {
     ...checkAmount(input),
     ...checkPayTo(input),
     ...checkAsset(input),
+    ...checkSolanaAsset(paymentRequired),
     ...checkEip712Domain(input),
     ...checkAuthorizationWindow(input),
     ...checkVerifyVerdict(input),
@@ -281,22 +284,94 @@ function checkPayTo({
   paymentRequired,
   paymentPayload,
 }: DiagnosisInput): Finding[] {
-  const evm = paymentPayload ? asEvmExactPayload(paymentPayload) : undefined;
-  if (!evm) return [];
-  const selected = selectAccept(paymentRequired, paymentPayload);
-  const advertised = selected?.payTo;
-  if (!advertised) return [];
-  if (sameAddress(evm.authorization.to, advertised)) return [];
+  const findings: Finding[] = [];
 
-  return [
-    finding(
-      "error",
-      "pay_to_mismatch",
-      "payment.authorization.to",
-      `The authorization pays ${evm.authorization.to}, but the challenge requires ${advertised} for ${selected?.network ?? "this route"}.`,
-      "Re-sign with the payTo from the matching accepts[] entry. If the two differ because the server changed its receiving address, request a fresh 402 and sign that.",
-    ),
-  ];
+  // An EVM payment names its recipient inside the signed authorization.
+  const evm = paymentPayload ? asEvmExactPayload(paymentPayload) : undefined;
+  if (evm) {
+    const selected = selectAccept(paymentRequired, paymentPayload);
+    const advertised = selected?.payTo;
+    if (advertised && !sameAddress(evm.authorization.to, advertised)) {
+      findings.push(
+        finding(
+          "error",
+          "pay_to_mismatch",
+          "payment.authorization.to",
+          `The authorization pays ${evm.authorization.to}, but the challenge requires ${advertised} for ${selected?.network ?? "this route"}.`,
+          "Re-sign with the payTo from the matching accepts[] entry. If the two differ because the server changed its receiving address, request a fresh 402 and sign that.",
+        ),
+      );
+    }
+  }
+
+  // A Solana payment carries a signed transaction whose recipient cannot be read
+  // without decoding it, so compare the client's echo instead. That still catches
+  // the common bug — a server advertising an address that is not valid base58 on
+  // the chain it is advertised for, which no client can pay.
+  findings.push(...checkSolanaRecipient(paymentRequired));
+
+  return findings;
+}
+
+/**
+ * Every Solana offer must advertise a base58 recipient.
+ *
+ * This is the check that would have caught a server reusing one EVM address for
+ * every network: such an offer is unpayable, and the client only finds out when
+ * the transaction fails to build.
+ */
+function checkSolanaRecipient(
+  paymentRequired: WirePaymentRequired | undefined,
+): Finding[] {
+  const findings: Finding[] = [];
+  const offered = paymentRequired?.accepts ?? [];
+
+  offered.forEach((entry, index) => {
+    if (!entry.network.startsWith("solana:")) return;
+    if (entry.payTo && isSolanaAddress(entry.payTo)) return;
+    findings.push(
+      finding(
+        "error",
+        "pay_to_mismatch",
+        `challenge.accepts[${index}].payTo`,
+        `${describeNetwork(entry.network)} advertises recipient ${JSON.stringify(
+          entry.payTo,
+        )}, which is not a base58 Solana address. No client can build a transfer to it, so this offer is unpayable.`,
+        `Set a base58 Solana public key for ${entry.network}. An EVM address only exists on EVM chains — configure one receiving address per network.`,
+      ),
+    );
+  });
+
+  return findings;
+}
+
+/**
+ * A Solana mint is a base58 address, so an EVM contract address in a Solana offer
+ * is a configuration error rather than a token that happens to look unusual.
+ */
+function checkSolanaAsset(
+  paymentRequired: WirePaymentRequired | undefined,
+): Finding[] {
+  const findings: Finding[] = [];
+  const offered = paymentRequired?.accepts ?? [];
+
+  offered.forEach((entry, index) => {
+    if (!entry.network.startsWith("solana:")) return;
+    if (!entry.asset || isSolanaAddress(entry.asset)) return;
+    findings.push(
+      finding(
+        "error",
+        "asset_mismatch",
+        `challenge.accepts[${index}].asset`,
+        `The Solana offer advertises asset ${JSON.stringify(
+          entry.asset,
+        )}, which is not a base58 mint address.`,
+        "Set the SPL token mint for this network, e.g. EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v for USDC on mainnet, or price the route as a \"$\" amount so the SDK resolves the mint.",
+      ),
+    );
+  });
+
+  return findings;
 }
 
 /** The asset in `accepts[]` must be the one the client signed against. */

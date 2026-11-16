@@ -364,6 +364,95 @@ describe("eip712_domain_mismatch", () => {
   });
 });
 
+describe("solana offers", () => {
+  const SOLANA_DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+  const MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const SOL_PAY_TO = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+  const solanaAccept = (overrides: Record<string, unknown> = {}) => ({
+    scheme: "exact",
+    network: SOLANA_DEVNET,
+    amount: "10000",
+    asset: MINT,
+    payTo: SOL_PAY_TO,
+    maxTimeoutSeconds: 60,
+    ...overrides,
+  });
+
+  it("accepts a conformant Solana offer", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({ accepts: [solanaAccept()] }),
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it("flags an EVM address advertised as a Solana recipient", () => {
+    // The exact bug that shipped in 0.1.0: one payTo reused for every network.
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({ accepts: [solanaAccept({ payTo: PAY_TO })] }),
+    });
+
+    const hit = findings.find(finding => finding.code === "pay_to_mismatch");
+    expect(hit?.severity).toBe("error");
+    expect(hit?.field).toBe("challenge.accepts[0].payTo");
+    expect(hit?.problem).toContain("unpayable");
+    expect(hit?.fix).toContain("base58");
+  });
+
+  it("flags an EVM contract address advertised as a Solana mint", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({ accepts: [solanaAccept({ asset: USDC_BASE_SEPOLIA })] }),
+    });
+
+    const hit = findings.find(finding => finding.code === "asset_mismatch");
+    expect(hit?.field).toBe("challenge.accepts[0].asset");
+    expect(hit?.fix).toContain("mint");
+  });
+
+  it("names the right entry when only one of several offers is broken", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({
+        accepts: [
+          {
+            scheme: "exact",
+            network: BASE_SEPOLIA,
+            amount: "10000",
+            asset: USDC_BASE_SEPOLIA,
+            payTo: PAY_TO,
+            maxTimeoutSeconds: 60,
+            extra: { name: "USDC", version: "2" },
+          },
+          solanaAccept({ payTo: "not-a-solana-key" }),
+        ],
+      }),
+    });
+
+    const hit = findings.find(finding => finding.code === "pay_to_mismatch");
+    expect(hit?.field).toBe("challenge.accepts[1].payTo");
+  });
+
+  it("does not report an amount mismatch from a Solana payload it cannot read", () => {
+    // A Solana payment carries a signed transaction, not an authorization, so the
+    // amount is not inspectable. Claiming a mismatch would be a guess.
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({ accepts: [solanaAccept()] }),
+      paymentPayload: {
+        x402Version: 2,
+        accepted: solanaAccept(),
+        payload: { transaction: "AQABAg==" },
+      },
+      verifyResponse: { isValid: true, payer: SOL_PAY_TO },
+    });
+
+    expect(findings.filter(finding => finding.code === "amount_mismatch")).toEqual([]);
+  });
+});
+
 describe("pay_to_mismatch", () => {
   it("flags a different recipient", () => {
     const other = "0x0000000000000000000000000000000000000001";

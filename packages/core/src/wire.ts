@@ -48,6 +48,17 @@ export interface WireEvmExactPayload {
   authorization: WireEvmAuthorization;
 }
 
+/**
+ * `PaymentPayload.payload` for Solana `exact`.
+ *
+ * A base64 wire transaction. The diagnostics deliberately do not decode it: that
+ * needs the Solana SDK and instruction-level parsing, and a wrong guess about a
+ * transfer instruction is worse than an honest "not checked".
+ */
+export interface WireSvmExactPayload {
+  transaction: string;
+}
+
 /** `PaymentPayload` as carried in the base64 `PAYMENT-SIGNATURE` header. */
 export interface WirePaymentPayload {
   x402Version: number;
@@ -91,6 +102,45 @@ export function isAtomicAmount(value: unknown): value is string {
 
 export function isCaip2Network(value: unknown): value is string {
   return typeof value === "string" && CAIP2_PATTERN.test(value);
+}
+
+/** Base58 alphabet used by Solana addresses (no `0`, `O`, `I`, `l`). */
+const BASE58_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/** True when `value` looks like a base58 Solana account or mint address. */
+export function isSolanaAddress(value: unknown): value is string {
+  return typeof value === "string" && BASE58_PATTERN.test(value);
+}
+
+/**
+ * Extract the `exact` Solana payload of a `paymentPayload`, if it has one.
+ *
+ * The Solana scheme signs a transaction rather than an EIP-3009 authorization,
+ * so the payload carries a base64 wire transaction and nothing else the
+ * diagnostics can read. That is why the checks built on this are deliberately
+ * shallow: recipient, amount and mint come from the client's `accepted` echo and
+ * the challenge, never from the transaction itself. Decoding the transaction
+ * would mean depending on the Solana SDK, and a wrong guess about an instruction
+ * is worse than an honest "not checked".
+ *
+ * @param payload - A decoded `PAYMENT-SIGNATURE`
+ * @returns The SVM exact payload, or `undefined` when this is not one
+ */
+export function asSvmExactPayload(
+  payload: unknown,
+): WireSvmExactPayload | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const inner = (payload as WirePaymentPayload).payload;
+  if (typeof inner !== "object" || inner === null) return undefined;
+  const candidate = inner as Partial<WireSvmExactPayload>;
+  if (typeof candidate.transaction !== "string") return undefined;
+  if (candidate.transaction.length === 0) return undefined;
+  return candidate as WireSvmExactPayload;
+}
+
+/** True when the payload is a Solana `exact` payment rather than an EVM one. */
+export function isSvmExactPayload(payload: unknown): boolean {
+  return asSvmExactPayload(payload) !== undefined;
 }
 
 /**

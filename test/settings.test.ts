@@ -110,6 +110,52 @@ describe("multi-network pricing", () => {
   });
 });
 
+describe("payment flow", () => {
+  it("omits extra when no flow is requested, so the SDK default applies", () => {
+    const config = resolveConfig(configInput());
+    const accepts = toRoutesConfig(config)["GET /weather"]?.accepts ?? [];
+    expect(accepts[0]?.extra).toBeUndefined();
+  });
+
+  it("forwards an explicit flow into accepts[].extra", () => {
+    // The SDK reads the flow only from extra.paymentFlow, so anything else would
+    // be a setting that is accepted and ignored.
+    const config = resolveConfig(
+      configInput({
+        routes: [{ route: "GET /generate", price: "0.05", paymentFlow: "upfront" }],
+      }),
+    );
+    const accepts = toRoutesConfig(config)["GET /generate"]?.accepts ?? [];
+    expect(accepts[0]?.extra).toEqual({ paymentFlow: "upfront" });
+  });
+
+  it("rejects an unknown flow with the two valid values", () => {
+    try {
+      resolveConfig(
+        configInput({ routes: [{ route: "GET /x", price: "0.01", paymentFlow: "escrow" }] }),
+      );
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect((error as ConfigError).message).toContain("authorization");
+      expect((error as ConfigError).message).toContain("upfront");
+    }
+  });
+
+  it("keeps the flow per route rather than global", () => {
+    const config = resolveConfig(
+      configInput({
+        routes: [
+          { route: "GET /weather", price: "0.001" },
+          { route: "POST /generate", price: "0.05", paymentFlow: "upfront" },
+        ],
+      }),
+    );
+    const routes = toRoutesConfig(config);
+    expect(routes["GET /weather"]?.accepts[0]?.extra).toBeUndefined();
+    expect(routes["POST /generate"]?.accepts[0]?.extra).toEqual({ paymentFlow: "upfront" });
+  });
+});
+
 describe("receiving addresses per network", () => {
   it("refuses one EVM address for a Solana network", () => {
     // The bug this prevents: the challenge advertised 0x2096… as the recipient
@@ -453,6 +499,120 @@ describe("multi-network against the real middleware", () => {
     const required = events.find(event => event.type === "payment.required");
     expect(required?.offers).toBe(2);
   });
+});
+
+describe("payment flow against the real middleware", () => {
+  let facilitator: MockFacilitator;
+
+  beforeAll(async () => {
+    facilitator = await startMockFacilitator({ network: BASE_SEPOLIA });
+  });
+
+  afterAll(async () => {
+    await facilitator.close();
+  });
+
+  function flowConfig(flow: "authorization" | "upfront"): LensConfig {
+    return resolveConfig({
+      facilitatorUrl: facilitator.url,
+      network: BASE_SEPOLIA,
+      payTo: PAY_TO,
+      routes: [{ route: "GET /weather", price: "0.001", paymentFlow: flow }],
+      env: baseEnv,
+    });
+  }
+
+  it("settles before the handler runs when the route asks for upfront", async () => {
+    // The point of upfront is that a handler which throws still gets charged,
+    // because the money moved first. That ordering is what this asserts.
+    const harness = await startServer(flowConfig("upfront"));
+    try {
+      const unpaid = await fetch(`${harness.baseUrl}/weather`);
+      const challenge = decodePaymentRequiredHeader(
+        unpaid.headers.get("payment-required") as string,
+      ) as unknown as WirePaymentRequired;
+      const accept = challenge.accepts?.[0];
+
+      expect(accept?.extra?.paymentFlow).toBe("upfront");
+
+      const settleIndexBefore = facilitator.calls.filter(call => call.path === "settle").length;
+
+      const paid = await fetch(`${harness.baseUrl}/weather`, {
+        headers: { "PAYMENT-SIGNATURE": encodePayload(challenge) },
+      });
+
+      expect(paid.status).toBe(200);
+      expect(harness.handlerCalls.count).toBe(1);
+      // Exactly one settle, and it happened for a successful request.
+      const settleCalls = facilitator.calls.filter(call => call.path === "settle");
+      expect(settleCalls.length).toBe(settleIndexBefore + 1);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("does not call the handler at all when an upfront settle fails", async () => {
+    const config = flowConfig("upfront");
+    const harness = await startServer(config);
+    try {
+      const unpaid = await fetch(`${harness.baseUrl}/weather`);
+      const challenge = decodePaymentRequiredHeader(
+        unpaid.headers.get("payment-required") as string,
+      ) as unknown as WirePaymentRequired;
+
+      facilitator.settleResult = {
+        success: false,
+        errorReason: "insufficient_funds",
+        // `transaction` is required by the response schema. Omitting it makes the
+        // SDK treat the reply as malformed and answer 502, which is a different
+        // failure mode from a well-formed rejection.
+        transaction: "",
+        network: BASE_SEPOLIA,
+        payer: PAYER,
+      };
+
+      const paid = await fetch(`${harness.baseUrl}/weather`, {
+        headers: { "PAYMENT-SIGNATURE": encodePayload(challenge) },
+      });
+
+      // No goods for an unpaid upgrade: this is the whole reason to use upfront.
+      expect(paid.status).toBe(402);
+      expect(harness.handlerCalls.count).toBe(0);
+    } finally {
+      facilitator.settleResult = {
+        success: true,
+        transaction: `0x${"11".repeat(32)}`,
+        network: BASE_SEPOLIA,
+        payer: PAYER,
+      };
+      await harness.close();
+    }
+  });
+
+  /** Encode a fake-but-well-formed EVM exact payload for the challenge. */
+  function encodePayload(challenge: WirePaymentRequired): string {
+    const accept = challenge.accepts?.[0];
+    if (!accept) throw new Error("challenge has no accepts");
+    return Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        resource: challenge.resource,
+        accepted: accept,
+        payload: {
+          signature: `0x${"ab".repeat(65)}`,
+          authorization: {
+            from: PAYER,
+            to: accept.payTo,
+            value: accept.amount,
+            validAfter: "0",
+            validBefore: "9999999999",
+            nonce: `0x${"cd".repeat(32)}`,
+          },
+        },
+      }),
+      "utf8",
+    ).toString("base64");
+  }
 });
 
 describe("access grants", () => {

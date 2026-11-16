@@ -63,21 +63,23 @@ is emitted by a test. — **met locally**; the workflows run once pushed.
 
 ## Stage 2 — Make the advertised support real
 
-- [ ] **Solana diagnostics.** Add `asSvmExactPayload` and rules for: recipient
-      comparison (base58), validity window (`recentBlockhash` /
-      `lastValidBlockHeight` instead of `validBefore`), amount. Without this,
-      Solana support is decoration.
-- [ ] **`paymentFlow` as configuration** — `authorization` vs `upfront`.
-      Both schemes support both flows (`eip3009: { supported: [...] }`,
-      Solana `default: { supported: [...] }`), but `LensPaymentOption` has no
-      field for it, so choosing requires hand-building `RoutesConfig`.
-- [ ] **CJS smoke test** — `tsup` emits CJS but nothing ever `require()`s it, and
-      that is the path that breaks first.
+- [x] **Solana diagnostics.** Added `asSvmExactPayload` plus rules that check what
+      is actually checkable without decoding the transaction: a Solana offer must
+      advertise a base58 recipient and a base58 mint. This is the exact bug that
+      shipped in `0.1.0` (one EVM address reused for Solana) and it is now a
+      finding. Deliberately shallow: the payload is a base64 wire transaction, and
+      guessing at its instructions would be worse than an honest "not checked".
+- [x] **`paymentFlow` as configuration** — `authorization` vs `upfront`, per
+      route, forwarded to `accepts[].extra.paymentFlow`. Verified against the real
+      middleware: with `upfront` and a failing settle the handler is never called.
+- [ ] **CJS smoke test** — done in Stage 1 (`scripts/smoke-dist.mjs`); kept here as
+      the reason it exists.
 - [ ] **Golden fixtures** — real payloads captured from x402.org and CDP,
       committed under `test/fixtures/`. Catches specification drift before users do.
 
 **Exit criterion:** a Solana payment failure produces a specific finding, not an
-empty list.
+empty list. — **met** for configuration-level failures; transaction-level
+inspection needs the Solana SDK and is out of scope by design.
 
 ## Stage 3 — Publish and get real feedback
 

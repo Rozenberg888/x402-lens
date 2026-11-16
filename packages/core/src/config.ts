@@ -63,7 +63,23 @@ export interface RoutePrice {
   tags?: string[];
   /** Per-route override of the advertised settlement window, seconds. */
   maxTimeoutSeconds?: number;
+  /**
+   * When the money moves relative to your handler.
+   *
+   * - `authorization` (default) verifies, runs the handler, then settles. A
+   *   settlement failure after a `200` means the buyer got the data and you got
+   *   nothing. Acceptable for cheap, repeatable reads.
+   * - `upfront` settles first, then runs the handler. No goods without payment;
+   *   the trade-off is that a handler crash after settlement needs a refund.
+   *
+   * Choose by which failure costs more. For anything expensive or
+   * non-repeatable — generation, inference, writes — `upfront` is the safe side.
+   */
+  paymentFlow?: PaymentFlow;
 }
+
+/** When settlement happens relative to the route handler. */
+export type PaymentFlow = "authorization" | "upfront";
 
 export interface LensConfig {
   /** Facilitator origin, e.g. `https://x402.org/facilitator`. */
@@ -617,6 +633,17 @@ function metadata(entry: Partial<RoutePrice>): Partial<RoutePrice> {
   if (entry.maxTimeoutSeconds !== undefined) {
     result.maxTimeoutSeconds = entry.maxTimeoutSeconds;
   }
+  if (entry.paymentFlow !== undefined) {
+    if (entry.paymentFlow !== "authorization" && entry.paymentFlow !== "upfront") {
+      throw new ConfigError(
+        "routes",
+        `Route "${entry.method ?? ""} ${entry.path ?? ""}".paymentFlow is ${JSON.stringify(
+          entry.paymentFlow,
+        )}. Use "authorization" (settle after the handler) or "upfront" (settle before it). The SDK rejects anything else at startup with a less specific message.`,
+      );
+    }
+    result.paymentFlow = entry.paymentFlow;
+  }
   return result;
 }
 
@@ -685,6 +712,11 @@ export interface LensPaymentOption {
   network: string;
   payTo: string;
   maxTimeoutSeconds: number;
+  /**
+   * Forwarded to `accepts[].extra.paymentFlow`, which is where the SDK reads it.
+   * Protocol-reserved, so it must be set here rather than by an extension.
+   */
+  extra?: Record<string, unknown>;
 }
 
 /** Route config shape accepted by `@x402/express`. */
@@ -730,6 +762,7 @@ export function toRoutesConfig(config: LensConfig): Record<string, LensRouteConf
         network,
         payTo: config.payToByNetwork[network] ?? config.payTo,
         maxTimeoutSeconds: route.maxTimeoutSeconds ?? config.maxTimeoutSeconds,
+        ...(route.paymentFlow ? { extra: { paymentFlow: route.paymentFlow } } : {}),
       })),
       ...(route.description ? { description: route.description } : {}),
       ...(route.mimeType ? { mimeType: route.mimeType } : {}),

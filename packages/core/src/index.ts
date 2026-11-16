@@ -24,9 +24,17 @@ export type {
   WirePaymentRequired,
   WirePaymentRequirements,
   WireSettleResponse,
+  WireSvmExactPayload,
   WireVerifyResponse,
 } from "./wire.js";
-export { asEvmExactPayload, isAtomicAmount, isCaip2Network } from "./wire.js";
+export {
+  asEvmExactPayload,
+  asSvmExactPayload,
+  isAtomicAmount,
+  isCaip2Network,
+  isSolanaAddress,
+  isSvmExactPayload,
+} from "./wire.js";
 
 export type { DiagnosisInput } from "./findings/rules.js";
 export { diagnose } from "./findings/rules.js";
@@ -50,6 +58,7 @@ export type {
   LensRouteConfig,
   LoadConfigOptions,
   PayToInput,
+  PaymentFlow,
   ResolveConfigInput,
   RouteInput,
   RoutePrice,

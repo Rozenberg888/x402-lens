@@ -163,6 +163,33 @@ per-path shape and rejects a flat headers object. To replace the client
 entirely (an in-process facilitator, a signing proxy), pass
 `facilitatorClient`.
 
+## When the money moves
+
+By default the middleware verifies, runs your handler, then settles. That means a
+settlement failure after a `200` gives the buyer the data and gives you nothing —
+fine for a cheap, repeatable read, wrong for anything expensive.
+
+```ts
+paymentLens({
+  routes: {
+    "GET /weather": "$0.001",                              // authorization: settle after
+    "POST /generate": { price: "0.05", paymentFlow: "upfront" },  // settle first
+  },
+});
+```
+
+| | `authorization` (default) | `upfront` |
+| --- | --- | --- |
+| Money before your handler | no | yes |
+| Goods without payment | possible | impossible |
+| Payment without goods | impossible | possible, needs a refund |
+| Fits | cheap idempotent reads | generation, inference, writes |
+
+Choose by which failure costs more. `upfront` is the safe side for anything
+non-repeatable; the trade-off is that a handler crash after settlement needs a
+refund path. Verified against the real middleware: with `upfront` and a failing
+settle, the handler is never called.
+
 ## Free access without payment
 
 A route is either paid or free, but real deployments need exceptions: health
@@ -225,9 +252,22 @@ at fault, the `problem`, and a `fix`. Covered causes:
 
 `x402_version_mismatch`, `missing_accepts`, `network_not_caip2`,
 `network_not_offered`, `amount_not_atomic`, `amount_mismatch`, `pay_to_mismatch`,
-`asset_mismatch`, `eip712_domain_mismatch` (the hint attached to
-`signature_mismatch`), `authorization_expired`, `authorization_not_yet_valid`,
-`signature_mismatch`, `settlement_pending`.
+`asset_mismatch`, `eip712_domain_mismatch`, `authorization_expired`,
+`authorization_not_yet_valid`, `signature_mismatch`, `settlement_pending`.
+
+Two of these are worth calling out because they catch bugs no mock surfaces:
+
+- `eip712_domain_mismatch` — the domain is built from `extra.name`,
+  `extra.version`, the chain id, and the asset. A missing name or version is what
+  makes a signature recover to the wrong address with no explanation.
+- `pay_to_mismatch` also fires when a **Solana** offer advertises a recipient
+  that is not base58. That offer is unpayable, and the client only discovers it
+  when the transaction fails to build.
+
+On Solana the payload is a signed transaction rather than an authorization, so
+recipient and amount cannot be read without decoding it. The rules check what is
+knowable — address and mint format, network, scheme, amount atomicity — and say
+nothing about what they cannot see. An honest gap beats a confident guess.
 
 Browser CORS readiness is a static property of an endpoint rather than a fact
 about one payment, so it is reported by `x402-lens inspect` and `checkCors`, not

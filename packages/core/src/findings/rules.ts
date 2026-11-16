@@ -59,6 +59,7 @@ export function diagnose(input: DiagnosisInput): Finding[] {
     ...checkAmount(input),
     ...checkPayTo(input),
     ...checkAsset(input),
+    ...checkEip712Domain(input),
     ...checkAuthorizationWindow(input),
     ...checkVerifyVerdict(input),
     ...checkSettlementVerdict(input),
@@ -322,9 +323,91 @@ function checkAsset({
   ];
 }
 
-/** `validAfter` / `validBefore` are absolute unix seconds. */
-function checkAuthorizationWindow({
+/**
+ * The EIP-712 domain must be complete, because a missing or wrong field makes
+ * every signature invalid in a way the facilitator reports only as
+ * "invalid signature".
+ *
+ * An EVM `exact` payment signs an EIP-3009 `TransferWithAuthorization` against a
+ * domain built from four values. Two of them come from `extra` on the accepted
+ * requirement, one from the network's chain id, and one is the asset address.
+ * When `extra.name` or `extra.version` is absent the client cannot build the
+ * domain at all — the usual outcome is a signature that recovers to a different
+ * address, and an operator who cannot tell why.
+ *
+ * This is a warning rather than an error: some tokens publish a domain the
+ * facilitator knows out of band, so an absent `extra` is suspicious, not
+ * certainly fatal. A value that is present but the wrong type is an error.
+ */
+function checkEip712Domain({
+  paymentRequired,
   paymentPayload,
+}: DiagnosisInput): Finding[] {
+  const accepted = paymentPayload?.accepted;
+  // Only EVM exact payments carry an EIP-712 domain.
+  const evm = paymentPayload ? asEvmExactPayload(paymentPayload) : undefined;
+  const network = accepted?.network ?? paymentRequired?.accepts?.[0]?.network;
+  if (!network || !network.startsWith("eip155:")) return [];
+  if (paymentPayload && !evm) return [];
+  if (!paymentRequired && !paymentPayload) return [];
+
+  const offered = paymentRequired?.accepts ?? [];
+  const source =
+    offered.find(
+      entry => entry.network === accepted?.network && entry.scheme === accepted?.scheme,
+    ) ??
+    offered.find(entry => entry.scheme === (accepted?.scheme ?? "exact")) ??
+    offered[0] ??
+    accepted;
+  if (!source) return [];
+
+  const findings: Finding[] = [];
+  const extra = source.extra ?? {};
+  const name = extra.name;
+  const version = extra.version;
+  const domain = `EIP-712 domain on ${describeNetwork(network)} (chain id ${
+    network.slice("eip155:".length)
+  }, verifyingContract ${source.asset || "unset"})`;
+
+  if (typeof name !== "string" || name.length === 0) {
+    findings.push(
+      finding(
+        "warn",
+        "eip712_domain_mismatch",
+        "challenge.accepts.extra.name",
+        `${domain} has no token name, so a client cannot build the domain it must sign against.`,
+        'Set accepts[].extra.name to the token name (usually "USDC"). The SDK reads it from the network\'s default asset when the price is a "$" amount, so seeing it missing usually means the route was priced with an explicit asset the SDK does not recognise.',
+      ),
+    );
+  }
+
+  if (version !== undefined && typeof version !== "string") {
+    findings.push(
+      finding(
+        "error",
+        "eip712_domain_mismatch",
+        "challenge.accepts.extra.version",
+        "The EIP-712 domain version is not a plain string.",
+        'Set accepts[].extra.version to the string the token uses, usually "2".',
+      ),
+    );
+  } else if (version === undefined) {
+    findings.push(
+      finding(
+        "warn",
+        "eip712_domain_mismatch",
+        "challenge.accepts.extra.version",
+        `${domain} has no version, so a client must guess whether the token signs "1" or "2".`,
+        'Set accepts[].extra.version to "2" (the EIP-3009 default) unless the token documents another value.',
+      ),
+    );
+  }
+
+  return findings;
+}
+
+/** `validAfter` / `validBefore` are absolute unix seconds. */
+function checkAuthorizationWindow({  paymentPayload,
   now = Date.now(),
 }: DiagnosisInput): Finding[] {
   const evm = paymentPayload ? asEvmExactPayload(paymentPayload) : undefined;

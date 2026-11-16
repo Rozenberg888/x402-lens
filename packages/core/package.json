@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm run typecheck && npm run build"
+    "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
   },
   "dependencies": {
     "@x402/core": "^2.31.0"

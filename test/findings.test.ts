@@ -12,6 +12,7 @@ import {
   NOW,
   PAY_TO,
   PAYER,
+  USDC_BASE_SEPOLIA,
   challenge,
   payloadWithAuth,
   paymentPayload,
@@ -265,6 +266,101 @@ describe("multiple accepts entries", () => {
     });
     const hit = findings.find(finding => finding.code === "amount_not_atomic");
     expect(hit?.field).toBe("challenge.accepts[1].amount");
+  });
+});
+
+describe("eip712_domain_mismatch", () => {
+  it("stays quiet for a conformant challenge", () => {
+    expect(diagnose({ now: NOW, paymentRequired: challenge() })).toEqual([]);
+  });
+
+  it("warns when the domain has no token name", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({
+        accepts: [
+          {
+            scheme: "exact",
+            network: BASE_SEPOLIA,
+            amount: "10000",
+            asset: USDC_BASE_SEPOLIA,
+            payTo: PAY_TO,
+            maxTimeoutSeconds: 60,
+            extra: { version: "2" },
+          },
+        ],
+      }),
+    });
+
+    const hit = findings.find(finding => finding.code === "eip712_domain_mismatch");
+    expect(hit?.severity).toBe("warn");
+    expect(hit?.field).toBe("challenge.accepts.extra.name");
+    expect(hit?.fix).toContain("extra.name");
+  });
+
+  it("warns when the version is absent, since the client would have to guess", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({
+        accepts: [
+          {
+            scheme: "exact",
+            network: BASE_SEPOLIA,
+            amount: "10000",
+            asset: USDC_BASE_SEPOLIA,
+            payTo: PAY_TO,
+            maxTimeoutSeconds: 60,
+            extra: { name: "USDC" },
+          },
+        ],
+      }),
+    });
+
+    const hit = findings.find(finding => finding.code === "eip712_domain_mismatch");
+    expect(hit?.field).toBe("challenge.accepts.extra.version");
+    expect(hit?.fix).toContain("2");
+  });
+
+  it("flags a version that is not a string", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({
+        accepts: [
+          {
+            scheme: "exact",
+            network: BASE_SEPOLIA,
+            amount: "10000",
+            asset: USDC_BASE_SEPOLIA,
+            payTo: PAY_TO,
+            maxTimeoutSeconds: 60,
+            extra: { name: "USDC", version: 2 },
+          },
+        ],
+      }),
+    });
+
+    const hit = findings.find(finding => finding.code === "eip712_domain_mismatch");
+    expect(hit?.severity).toBe("error");
+  });
+
+  it("says nothing about a Solana offer, which has no EIP-712 domain", () => {
+    const findings = diagnose({
+      now: NOW,
+      paymentRequired: challenge({
+        accepts: [
+          {
+            scheme: "exact",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            amount: "10000",
+            asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+            maxTimeoutSeconds: 60,
+          },
+        ],
+      }),
+    });
+
+    expect(findings.some(finding => finding.code === "eip712_domain_mismatch")).toBe(false);
   });
 });
 

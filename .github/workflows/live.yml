@@ -1,0 +1,31 @@
+name: Live facilitator
+
+# Separate from CI on purpose: these tests depend on a third-party service, so a
+# facilitator outage must never turn a pull request red. A daily run still tells
+# us early when the public facilitator changes what it supports.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Public facilitator smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Live tests
+        run: npm run test:live
+        env:
+          X402_LIVE_FACILITATOR: ${{ vars.X402_LIVE_FACILITATOR || 'https://x402.org/facilitator' }}

@@ -59,6 +59,7 @@ export type {
   LoadConfigOptions,
   PayToInput,
   PaymentFlow,
+  PaymentScheme,
   ResolveConfigInput,
   RouteInput,
   RoutePrice,

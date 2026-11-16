@@ -76,7 +76,31 @@ export interface RoutePrice {
    * non-repeatable — generation, inference, writes — `upfront` is the safe side.
    */
   paymentFlow?: PaymentFlow;
+  /**
+   * Payment scheme. Defaults to `exact`.
+   *
+   * - `exact` — the buyer signs for the exact advertised amount.
+   * - `upto` — the buyer signs a ceiling and the server charges what was used.
+   *   The natural fit for metered work: tokens, compute, anything whose real
+   *   cost is only known after the handler runs.
+   *
+   * Not every combination is valid. `upto` on EVM settles only after the handler
+   * (`authorization`), and on Solana only through an escrow channel (`escrow`),
+   * so a mismatched `paymentFlow` is refused at config time — the SDK otherwise
+   * treats it as a fatal startup error and exits the process.
+   */
+  scheme?: PaymentScheme;
+  /**
+   * Flow override for `upto`, where the valid value differs per network family.
+   *
+   * Only needed for Solana `upto`, which requires `escrow`. Omitting it picks the
+   * scheme's default, which is correct in almost every case.
+   */
+  uptoFlow?: "authorization" | "escrow";
 }
+
+/** Supported payment schemes. */
+export type PaymentScheme = "exact" | "upto";
 
 /** When settlement happens relative to the route handler. */
 export type PaymentFlow = "authorization" | "upfront";
@@ -221,6 +245,7 @@ export function resolveConfig(input: ResolveConfigInput = {}): LensConfig {
   const facilitatorHeaders = resolveFacilitatorHeaders(input, env);
 
   assertAssetPricesSurviveMultipleNetworks(routes, networks);
+  assertSchemesAreValid(routes, networks);
 
   return {
     facilitatorUrl: facilitatorUrl.replace(/\/+$/, ""),
@@ -500,6 +525,61 @@ function assertAssetPricesSurviveMultipleNetworks(
   );
 }
 
+/**
+ * Refuse scheme/flow combinations the schemes cannot execute.
+ *
+ * This has to run during config resolution, not while building route configs:
+ * `@x402/core` validates routes during its background init and answers a
+ * `RouteConfigurationError` with `process.exit(1)`, so a server with one bad
+ * route never starts and never explains itself over HTTP. Failing here means the
+ * operator sees a route name and a reason at startup instead.
+ *
+ * The rules come from the schemes themselves: EVM `upto` supports only
+ * `authorization`, Solana `upto` only `escrow` (a payment channel), and `exact`
+ * supports both `authorization` and `upfront`.
+ *
+ * @param routes - Normalised routes
+ * @param networks - Configured networks
+ * @throws {ConfigError} On an impossible scheme/flow pair
+ */
+function assertSchemesAreValid(routes: RoutePrice[], networks: string[]): void {
+  for (const route of routes) {
+    const label = `${route.method} ${route.path}`;
+    const scheme = route.scheme ?? "exact";
+
+    if (scheme === "exact") {
+      if (route.uptoFlow !== undefined) {
+        throw new ConfigError(
+          "routes",
+          `Route "${label}" sets uptoFlow but uses scheme "exact". uptoFlow only applies to "upto"; use paymentFlow for exact.`,
+        );
+      }
+      continue;
+    }
+
+    // scheme === "upto" — the flow is fixed per network family.
+    if (route.paymentFlow !== undefined) {
+      throw new ConfigError(
+        "routes",
+        `Route "${label}" uses scheme "upto" and also sets paymentFlow "${route.paymentFlow}". The flow is fixed by the scheme for upto — remove paymentFlow, or use scheme "exact" if you need to choose.`,
+      );
+    }
+
+    for (const network of networks) {
+      const isSolana = network.startsWith("solana:");
+      const flow = route.uptoFlow ?? (isSolana ? "escrow" : "authorization");
+      const allowed = isSolana ? ["escrow"] : ["authorization"];
+      if (allowed.includes(flow)) continue;
+      throw new ConfigError(
+        "routes",
+        `Route "${label}" uses scheme "upto" on ${describeNetwork(network)}, where the only valid flow is ${allowed
+          .map(value => `"${value}"`)
+          .join(" or ")} (got "${flow}"). On EVM upto settles after the handler; on Solana it runs through an escrow channel.`,
+      );
+    }
+  }
+}
+
 function parseTimeout(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -644,6 +724,28 @@ function metadata(entry: Partial<RoutePrice>): Partial<RoutePrice> {
     }
     result.paymentFlow = entry.paymentFlow;
   }
+  if (entry.uptoFlow !== undefined) {
+    if (entry.uptoFlow !== "authorization" && entry.uptoFlow !== "escrow") {
+      throw new ConfigError(
+        "routes",
+        `Route "${entry.method ?? ""} ${entry.path ?? ""}".uptoFlow is ${JSON.stringify(
+          entry.uptoFlow,
+        )}. Use "authorization" for EVM or "escrow" for Solana.`,
+      );
+    }
+    result.uptoFlow = entry.uptoFlow;
+  }
+  if (entry.scheme !== undefined) {
+    if (entry.scheme !== "exact" && entry.scheme !== "upto") {
+      throw new ConfigError(
+        "routes",
+        `Route "${entry.method ?? ""} ${entry.path ?? ""}".scheme is ${JSON.stringify(
+          entry.scheme,
+        )}. x402-lens registers "exact" and "upto"; use the returned server handle to register anything else.`,
+      );
+    }
+    result.scheme = entry.scheme;
+  }
   return result;
 }
 
@@ -724,9 +826,28 @@ function routesFromEnv(env: Record<string, string | undefined>): RoutePrice[] {
   return routes;
 }
 
+/**
+ * Build the `extra` block for one offer.
+ *
+ * Validation lives in `assertSchemesAreValid`, which runs during config
+ * resolution so the error names the route at startup rather than surfacing as a
+ * fatal SDK failure during background init.
+ *
+ * @param route - Route being turned into an offer
+ * @param network - Network this offer is for
+ * @returns The extra block, or undefined when nothing needs to be set
+ */
+function extraFor(route: RoutePrice, network: string): Record<string, unknown> | undefined {
+  if ((route.scheme ?? "exact") === "upto") {
+    const flow = route.uptoFlow ?? (network.startsWith("solana:") ? "escrow" : "authorization");
+    return { paymentFlow: flow };
+  }
+  return route.paymentFlow ? { paymentFlow: route.paymentFlow } : undefined;
+}
+
 /** One payable option on a route, as handed to `@x402/express`. */
 export interface LensPaymentOption {
-  scheme: "exact";
+  scheme: PaymentScheme;
   price: string | AssetPrice;
   network: string;
   payTo: string;
@@ -770,19 +891,22 @@ export function toRoutesConfig(config: LensConfig): Record<string, LensRouteConf
   for (const route of config.routes) {
     const key = `${route.method} ${route.path}`;
     routes[key] = {
-      accepts: networks.map(network => ({
-        scheme: "exact" as const,
-        price:
-          typeof route.price === "string"
-            ? route.price.startsWith("$")
-              ? route.price
-              : `$${route.price}`
-            : { ...route.price },
-        network,
-        payTo: config.payToByNetwork[network] ?? config.payTo,
-        maxTimeoutSeconds: route.maxTimeoutSeconds ?? config.maxTimeoutSeconds,
-        ...(route.paymentFlow ? { extra: { paymentFlow: route.paymentFlow } } : {}),
-      })),
+      accepts: networks.map(network => {
+        const scheme = route.scheme ?? "exact";
+        return {
+          scheme,
+          price:
+            typeof route.price === "string"
+              ? route.price.startsWith("$")
+                ? route.price
+                : `$${route.price}`
+              : { ...route.price },
+          network,
+          payTo: config.payToByNetwork[network] ?? config.payTo,
+          maxTimeoutSeconds: route.maxTimeoutSeconds ?? config.maxTimeoutSeconds,
+          ...(extraFor(route, network) ? { extra: extraFor(route, network) } : {}),
+        };
+      }),
       ...(route.description ? { description: route.description } : {}),
       ...(route.mimeType ? { mimeType: route.mimeType } : {}),
       ...(route.serviceName ? { serviceName: route.serviceName } : {}),

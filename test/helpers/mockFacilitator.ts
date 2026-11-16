@@ -41,6 +41,13 @@ export interface MockFacilitatorOptions {
    * that advertises only one network makes a two-network config fail.
    */
   networks?: string[];
+  /**
+   * Schemes to advertise. Defaults to `["exact"]`.
+   *
+   * The SDK validates every route's scheme against this at startup and treats a
+   * missing one as fatal, so a test using `upto` must advertise it.
+   */
+  schemes?: string[];
   /** Return 500 from `/supported` to exercise the facilitator-error path. */
   failSupported?: boolean;
 }
@@ -91,11 +98,13 @@ export async function startMockFacilitator(
             return;
           }
           send(200, {
-            kinds: (options.networks ?? [network]).map(kindNetwork => ({
-              x402Version: 2,
-              scheme: "exact",
-              network: kindNetwork,
-            })),
+            kinds: (options.networks ?? [network]).flatMap(kindNetwork =>
+              (options.schemes ?? ["exact"]).map(scheme => ({
+                x402Version: 2,
+                scheme,
+                network: kindNetwork,
+              })),
+            ),
             extensions: [],
             signers: {},
           });

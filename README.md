@@ -163,6 +163,39 @@ per-path shape and rejects a flat headers object. To replace the client
 entirely (an in-process facilitator, a signing proxy), pass
 `facilitatorClient`.
 
+## Metered pricing with `upto`
+
+`exact` charges the advertised amount. When the real cost is only known after the
+work — tokens, compute, anything metered — use `upto`: the buyer authorises a
+ceiling and the server charges what was actually used.
+
+```ts
+paymentLens({
+  routes: {
+    "GET /weather": "$0.001",                                   // exact
+    "POST /generate": { price: "$0.05", scheme: "upto" },       // pay up to $0.05
+  },
+});
+```
+
+The flow is not yours to choose here — the scheme fixes it per network family:
+
+| Scheme | Network | Flow | Why |
+| --- | --- | --- | --- |
+| `exact` | any | `authorization` or `upfront` | your choice, per route |
+| `upto` | EVM (`eip155:*`) | `authorization` | settles after the handler; permit2 |
+| `upto` | Solana (`solana:*`) | `escrow` | runs through a payment channel |
+
+Setting `paymentFlow` on an `upto` route, or `uptoFlow` on an `exact` one, is a
+configuration error. That matters more than it looks: `@x402/core` validates
+routes during background init and answers a bad combination with
+`process.exit(1)`, so the server would die without ever returning a response.
+`x402-lens` refuses the combination during config resolution instead, naming the
+route and the valid flow.
+
+`batch-settlement` and `auth-capture` exist in the SDK but are not registered by
+this package. Use the returned `server` handle to add them.
+
 ## When the money moves
 
 By default the middleware verifies, runs your handler, then settles. That means a
@@ -315,8 +348,10 @@ gate a deploy. `add` prints a diff and only writes with `--write`.
 ```bash
 npm install
 npm run typecheck
-npm test            # 155 tests, no network
+npm test            # 322 tests, no network
 npm run test:live   # hits https://x402.org/facilitator
+npm run test:mutation  # mutation score on the core, ~8 minutes
+npm run fixtures:record # re-record golden fixtures from the real middleware
 npm run example     # accepts x402 payments on localhost:4021
 ```
 

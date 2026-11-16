@@ -32,6 +32,7 @@ import {
   type LensConfigInput,
   type LensEvent,
   type LensSink,
+  type PaymentScheme,
   type RouteInput,
   type WirePaymentPayload,
   type WirePaymentRequired,
@@ -48,7 +49,9 @@ import {
 } from "@x402/core/server";
 import { paymentMiddlewareFromHTTPServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { currentRequestContext, runWithRequestContext } from "./context.js";
 import { observePaymentRequired } from "./observe.js";
 
@@ -211,7 +214,8 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
   const facilitatorClient =
     options.facilitatorClient ?? buildFacilitatorClient(config);
   const server = new x402ResourceServer(facilitatorClient);
-  for (const network of config.networks) registerScheme(server, network);
+  const schemes = schemesInUse(config);
+  for (const network of config.networks) registerScheme(server, network, schemes);
 
   const routes = options.routesConfig ?? (toRoutesConfig(config) as unknown as RoutesConfig);
 
@@ -412,24 +416,50 @@ function applyCorsHeaders(res: Response, headers: Record<string, string>): void 
   }
 }
 
-function registerScheme(server: x402ResourceServer, network: string): void {
+/**
+ * Register the schemes this package supports on one network.
+ *
+ * `exact` is always registered; `upto` only when a route asks for it, so the
+ * challenge for an all-`exact` deployment stays byte-identical to before.
+ *
+ * @param server - Resource server to register on
+ * @param network - CAIP-2 network, already validated
+ * @param schemes - Schemes any route on this network needs
+ */
+function registerScheme(
+  server: x402ResourceServer,
+  network: string,
+  schemes: ReadonlySet<PaymentScheme>,
+): void {
   const separator = network.indexOf(":");
   const namespace = separator === -1 ? network : network.slice(0, separator);
   // `Network` is a template-literal type; the value was validated as CAIP-2 by
   // `resolveConfig` before reaching here.
   const caip2 = network as `${string}:${string}`;
+
   switch (namespace) {
-    case "eip155":
+    case "eip155": {
       server.register(caip2, new ExactEvmScheme());
+      if (schemes.has("upto")) server.register(caip2, new UptoEvmScheme());
       return;
-    case "solana":
+    }
+    case "solana": {
       server.register(caip2, new ExactSvmScheme());
+      if (schemes.has("upto")) server.register(caip2, new UptoSvmScheme({}));
       return;
+    }
     default:
       throw new Error(
-        `[x402-lens] No scheme for namespace "${namespace}". This package registers exact schemes for eip155 and solana. For any other network, keep the returned server instance and call server.register(network, scheme) yourself.`,
+        `[x402-lens] No scheme for namespace "${namespace}". This package registers exact (and upto) schemes for eip155 and solana. For any other network, keep the returned server instance and call server.register(network, scheme) yourself.`,
       );
   }
+}
+
+/** Which schemes the configured routes actually need. */
+function schemesInUse(config: LensConfig): Set<PaymentScheme> {
+  const used = new Set<PaymentScheme>();
+  for (const route of config.routes) used.add(route.scheme ?? "exact");
+  return used;
 }
 
 /** The three fields every event needs from a `PaymentRequirements`. */

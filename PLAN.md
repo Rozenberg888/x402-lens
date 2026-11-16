@@ -103,8 +103,13 @@ and their failure modes are known.
 
 - [ ] **Second adapter** — Fastify or Hono. Core is framework-agnostic already;
       the adapter is a thin layer. One framework means half the market cannot use it.
-- [ ] **Schemes `upto` and `batch-settlement`.** `upto` ("pay up to N") is the
-      natural fit for LLM tokens and metering, and is a sales argument in itself.
+      — **blocked**: `@x402/fastify` and `@x402/hono` do not exist in the SDK, and
+      the Express adapter is the only transport. A second adapter means writing the
+      transport integration, not wrapping one.
+- [~] **Schemes `upto` and `batch-settlement`.** `upto` is done (EVM + Solana,
+      with the flow rules enforced at config time and verified against the live
+      facilitator). `batch-settlement` and `auth-capture` are in the SDK but not
+      registered here; `upto` was the one with a clear buyer story.
 - [ ] **Ready-made exporters** — OpenTelemetry spans and metrics, Prometheus
       `/metrics`, Sentry breadcrumbs. For an observability product, "write your
       own `onEvent`" is a weak offer.

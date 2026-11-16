@@ -1,0 +1,39 @@
+{
+  "name": "@x402-lens/core",
+  "version": "0.1.0",
+  "description": "Framework-agnostic core for x402-lens: payment events, findings engine, config",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@x402/core": "^2.31.0"
+  },
+  "keywords": [
+    "x402",
+    "payments",
+    "observability",
+    "debugging",
+    "http-402"
+  ]
+}

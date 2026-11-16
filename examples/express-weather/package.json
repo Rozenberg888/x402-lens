@@ -1,0 +1,17 @@
+{
+  "name": "@x402-lens/example-express-weather",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Acceptance example: x402 protection on an existing Express route in a handful of lines",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@x402-lens/express": "0.1.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

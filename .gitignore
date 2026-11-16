@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local configuration, which carries facilitator URLs and wallet addresses.
+.env
+.env.local
+.env.*.local
+x402.config.local.json
+
+# Lens output.
+.x402-lens/
+
+# Logs and coverage.
+*.log
+npm-debug.log*
+coverage/
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

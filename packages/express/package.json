@@ -1,0 +1,46 @@
+{
+  "name": "@x402-lens/express",
+  "version": "0.1.0",
+  "description": "Express integration for x402-lens: x402 v2 payments with explainable observability",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@x402-lens/core": "0.1.0",
+    "@x402/core": "^2.31.0",
+    "@x402/evm": "^2.31.0",
+    "@x402/express": "^2.31.0",
+    "@x402/svm": "^2.31.0"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0"
+  },
+  "keywords": [
+    "x402",
+    "express",
+    "payments",
+    "middleware",
+    "observability"
+  ]
+}

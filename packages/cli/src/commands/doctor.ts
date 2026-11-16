@@ -1,0 +1,276 @@
+/**
+ * `x402-lens doctor` — check that a configuration can actually accept payments.
+ *
+ * Three things break a deployment before a single buyer arrives: a network the
+ * facilitator does not support, a missing or wrong-shaped receiving address, and
+ * a facilitator that is simply unreachable. All three are checkable up front.
+ */
+
+import {
+  WELL_KNOWN_NETWORKS,
+  describeNetwork,
+  isCaip2,
+  loadConfig,
+  suggestCaip2,
+  type LensConfig,
+} from "@x402-lens/core";
+
+export interface DoctorOptions {
+  /** Config to check. When absent, it is loaded from env and `x402.config.json`. */
+  config?: LensConfig;
+  /** Override the facilitator to probe. */
+  facilitatorUrl?: string;
+  /** Override the network to verify against `/supported`. */
+  network?: string;
+  /** Override the full network list. Wins over `network` when present. */
+  networks?: string[];
+  /** Fetch timeout, milliseconds. */
+  timeoutMs?: number;
+}
+
+export interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DoctorResult {
+  checks: DoctorCheck[];
+  exitCode: number;
+  text: string;
+}
+
+interface SupportedResponse {
+  kinds?: Array<{ x402Version?: number; scheme?: string; network?: string }>;
+  extensions?: string[];
+  signers?: Record<string, string[]>;
+}
+
+/**
+ * Run every configuration check that does not require a buyer.
+ *
+ * @param options - Config and probe overrides
+ * @returns Individual checks, a rendered report, and an exit code
+ */
+export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResult> {
+  const checks: DoctorCheck[] = [];
+
+  let config: LensConfig | undefined;
+  let configError: Error | undefined;
+  try {
+    config = options.config ?? (await loadConfig({ readConfigFile: true }));
+    checks.push({
+      name: "config",
+      ok: true,
+      detail: `facilitator ${config.facilitatorUrl}, network ${
+        config.networks.length > 1
+          ? config.networks.map(describeNetwork).join(", ")
+          : describeNetwork(config.network)
+      }, ${config.routes.length} route(s)`,
+    });
+  } catch (error) {
+    configError = error as Error;
+  }
+
+  const facilitatorUrl = (
+    options.facilitatorUrl ??
+    config?.facilitatorUrl ??
+    ""
+  ).replace(/\/+$/, "");
+  // An explicit network override replaces the list rather than adding to it:
+  // `--network` asks a question about one chain, not about the deployment.
+  const networks =
+    options.networks ??
+    (options.network ? [options.network] : (config?.networks ?? []));
+  const network = networks[0] ?? "";
+
+  if (!config) {
+    if (!facilitatorUrl || !network) {
+      checks.push({
+        name: "config",
+        ok: false,
+        detail: configError?.message ?? "Configuration could not be loaded.",
+      });
+      return finish(checks);
+    }
+    // Overrides supplied enough to probe the facilitator; the rest is reported.
+    checks.push({
+      name: "config",
+      ok: true,
+      detail:
+        "Probing with facilitator and network overrides. Full configuration (payTo, routes) was not loaded, so it was not checked.",
+    });
+  }
+
+  if (!isCaip2(network)) {
+    const suggestion = suggestCaip2(network);
+    checks.push({
+      name: "network format",
+      ok: false,
+      detail: `"${network}" is not CAIP-2.${suggestion ? ` Use "${suggestion}".` : ""}`,
+    });
+    return finish(checks);
+  }
+  checks.push({
+    name: "network format",
+    ok: true,
+    detail: describeNetwork(network),
+  });
+
+  if (config) {
+    checks.push(checkPayToShape(config.payTo, network));
+  }
+
+  let supported: SupportedResponse | undefined;
+  try {
+    const response = await fetch(`${facilitatorUrl}/supported`, {
+      headers: { Accept: "application/json", "User-Agent": "x402-lens/0.1" },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+    });
+    if (!response.ok) {
+      checks.push({
+        name: "facilitator reachable",
+        ok: false,
+        detail: `GET ${facilitatorUrl}/supported returned HTTP ${response.status}.`,
+      });
+      return finish(checks);
+    }
+    supported = (await response.json()) as SupportedResponse;
+    checks.push({
+      name: "facilitator reachable",
+      ok: true,
+      detail: `${facilitatorUrl}/supported responded with ${String(supported.kinds?.length ?? 0)} kind(s).`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "facilitator reachable",
+      ok: false,
+      detail: `Could not reach ${facilitatorUrl}/supported: ${(error as Error).message}. Check the URL, the network path, and any proxy in between.`,
+    });
+    return finish(checks);
+  }
+
+  const kinds = supported.kinds ?? [];
+  const matching = kinds.filter(
+    kind => kind.network === network && kind.x402Version === 2,
+  );
+
+  if (matching.length === 0) {
+    const v1Only = kinds.some(kind => kind.network === network && kind.x402Version === 1);
+    const available = Array.from(
+      new Set(kinds.filter(kind => kind.x402Version === 2).map(kind => kind.network ?? "")),
+    ).filter(Boolean);
+    checks.push({
+      name: "network supported",
+      ok: false,
+      detail: v1Only
+        ? `The facilitator lists ${network} for x402Version 1 only. This middleware speaks v2, so payments will be rejected.`
+        : `The facilitator does not list ${network} with x402Version 2. It supports: ${available.join(", ") || "nothing"}.`,
+    });
+  } else {
+    checks.push({
+      name: "network supported",
+      ok: true,
+      detail: `${network} is available for scheme(s): ${matching.map(kind => kind.scheme ?? "?").join(", ")}.`,
+    });
+  }
+
+  // Every configured network is validated by the SDK at startup, and a missing
+  // one is fatal: `@x402/core` calls process.exit(1) from its background init,
+  // which kills the server rather than returning a 402. Checking all of them
+  // here is the only place that failure can be caught before a deploy.
+  const missing = networks.filter(
+    candidate =>
+      !kinds.some(kind => kind.network === candidate && kind.x402Version === 2),
+  );
+  if (networks.length > 1) {
+    checks.push(
+      missing.length === 0
+        ? {
+            name: "all networks supported",
+            ok: true,
+            detail: `All ${networks.length} configured networks are listed for x402Version 2: ${networks.join(", ")}.`,
+          }
+        : {
+            name: "all networks supported",
+            ok: false,
+            detail: `These configured networks are not listed for x402Version 2: ${missing.join(
+              ", ",
+            )}. The SDK treats this as a fatal startup error and exits the process, so the server will not start. Remove them from networks, or use a facilitator that supports them.`,
+          },
+    );
+  }
+
+  const exactSupported = matching.some(kind => kind.scheme === "exact");
+  checks.push({
+    name: "exact scheme",
+    ok: exactSupported,
+    detail: exactSupported
+      ? "The facilitator supports the exact scheme on this network."
+      : `Routes use the exact scheme, which is not listed for ${network}.`,
+  });
+
+  if (WELL_KNOWN_NETWORKS[network as keyof typeof WELL_KNOWN_NETWORKS]) {
+    checks.push({
+      name: "known network",
+      ok: true,
+      detail: `${describeNetwork(network)} — widely deployed, safe for production.`,
+    });
+  } else {
+    checks.push({
+      name: "known network",
+      ok: true,
+      detail: `${network} is not in the built-in list. That is fine if you intended it; verify token and facilitator support yourself.`,
+    });
+  }
+
+  return finish(checks);
+}
+
+/** Cheap shape check: EVM addresses are 0x + 40 hex, SVM are base58. */
+function checkPayToShape(payTo: string, network: string): DoctorCheck {
+  const namespace = network.slice(0, network.indexOf(":"));
+
+  if (namespace === "eip155") {
+    const ok = /^0x[0-9a-fA-F]{40}$/.test(payTo);
+    return {
+      name: "payTo address",
+      ok,
+      detail: ok
+        ? `${payTo} looks like an EVM address.`
+        : `"${payTo}" is not a 0x-prefixed 20-byte address, which ${describeNetwork(network)} requires.`,
+    };
+  }
+
+  if (namespace === "solana") {
+    const ok = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(payTo);
+    return {
+      name: "payTo address",
+      ok,
+      detail: ok
+        ? `${payTo} looks like a base58 Solana address.`
+        : `"${payTo}" is not a base58 public key, which ${describeNetwork(network)} requires.`,
+    };
+  }
+
+  return {
+    name: "payTo address",
+    ok: payTo.length > 0,
+    detail: `No format check available for namespace "${namespace}". Confirm the address format with the network's tooling.`,
+  };
+}
+
+function finish(checks: DoctorCheck[]): DoctorResult {
+  const failed = checks.filter(check => !check.ok);
+  const lines = checks.map(check => `${check.ok ? "ok  " : "FAIL"}  ${check.name}: ${check.detail}`);
+  const summary =
+    failed.length === 0
+      ? "\nAll checks passed."
+      : `\n${failed.length} check(s) failed. Fix the FAIL lines above; every one of them prevents real payments.`;
+
+  return {
+    checks,
+    exitCode: failed.length === 0 ? 0 : 1,
+    text: [...lines, summary].join("\n"),
+  };
+}

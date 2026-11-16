@@ -1,0 +1,33 @@
+{
+  "name": "x402-lens-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "x402-lens — observability SDK + debugger for x402 v2 payments",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "example": "npm run start --workspace @x402-lens/example-express-weather",
+    "version:set": "node scripts/version.mjs",
+    "check:versions": "node scripts/check-workspace-versions.mjs",
+    "release": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.4",
+    "express": "^4.21.2",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.9"
+  }
+}

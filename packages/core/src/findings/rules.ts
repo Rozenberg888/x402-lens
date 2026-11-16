@@ -645,7 +645,7 @@ function checkSettlementVerdict({
         `The transaction was broadcast${
           tx ? ` (${tx})` : ""
         } but its confirmation could not be established. This is non-terminal: it may still confirm.`,
-        "Reconcile on chain before retrying. Do not treat the 402 as a rejection and do not place a second payment — that risks charging the buyer twice.",
+        "Run `x402-lens reconcile --tx <hash>` before retrying. Do not treat the 402 as a rejection and do not place a second payment — that risks charging the buyer twice.",
       ),
     ];
   }
@@ -653,10 +653,10 @@ function checkSettlementVerdict({
   return [
     finding(
       "error",
-      "settlement_pending",
+      "settlement_failed",
       "settlement.errorReason",
       `Settlement failed with "${reason}"${tx ? ` (transaction ${tx})` : ""}.`,
-      "Treat this as failed, not as pending. If a transaction hash is present, verify it on chain before letting the buyer retry.",
+      "Treat this as failed, not as pending. If a transaction hash is present, run `x402-lens reconcile --tx <hash>` before letting the buyer retry.",
     ),
   ];
 }

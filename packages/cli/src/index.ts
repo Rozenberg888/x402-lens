@@ -8,6 +8,7 @@ import { AddError, addProtection } from "./commands/add.js";
 import { explainPayment } from "./commands/explain.js";
 import { runDoctor } from "./commands/doctor.js";
 import { inspectEndpoint } from "./commands/inspect.js";
+import { reconcileTransaction } from "./commands/reconcile.js";
 import { flagEnabled, flagValue, parseArgs } from "./args.js";
 import { InputError } from "./input.js";
 
@@ -25,6 +26,10 @@ Usage:
   x402-lens doctor [--facilitator <url>] [--network <caip2>] [--networks <a,b>]
       Verify that configuration can actually accept payments, including that
       the facilitator supports every configured network with x402Version 2.
+
+  x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>]
+      Check whether a settlement transaction confirmed on chain. Use this
+      after settlement_pending — never retry a payment until you know.
 
   x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
       Add x402 protection to an existing Express route. Prints a diff unless
@@ -123,6 +128,28 @@ export async function main(argv: string[]): Promise<number> {
           route,
           price,
           write: flagEnabled(args, "write"),
+        });
+        process.stdout.write(`${result.text}\n`);
+        return result.exitCode;
+      }
+
+      case "reconcile": {
+        const tx = flagValue(args, "tx") ?? args.positionals[0];
+        if (!tx) {
+          process.stderr.write(
+            "reconcile requires --tx <hash>. Example:\n  x402-lens reconcile --tx 0xabc… --network eip155:84532\n",
+          );
+          return 2;
+        }
+        const result = await reconcileTransaction({
+          tx,
+          ...(flagValue(args, "network")
+            ? { network: flagValue(args, "network") as string }
+            : {}),
+          ...(flagValue(args, "rpc") ? { rpcUrl: flagValue(args, "rpc") as string } : {}),
+          ...(flagValue(args, "timeout")
+            ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
+            : {}),
         });
         process.stdout.write(`${result.text}\n`);
         return result.exitCode;

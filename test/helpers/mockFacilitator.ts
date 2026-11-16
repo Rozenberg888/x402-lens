@@ -27,6 +27,14 @@ export interface MockFacilitator {
     network?: string;
     payer?: string;
   };
+  /** Override the HTTP status `/verify` returns. Defaults to 200. */
+  verifyStatus: number;
+  /** Override the HTTP status `/settle` returns. Defaults to 200. */
+  settleStatus: number;
+  /** Artificial delay before `/verify` responds, milliseconds. */
+  verifyDelayMs: number;
+  /** Artificial delay before `/settle` responds, milliseconds. */
+  settleDelayMs: number;
   /** Every request body the facilitator received, for assertions. */
   calls: Array<{ path: string; body: unknown }>;
   close(): Promise<void>;
@@ -50,6 +58,8 @@ export interface MockFacilitatorOptions {
   schemes?: string[];
   /** Return 500 from `/supported` to exercise the facilitator-error path. */
   failSupported?: boolean;
+  /** Return this status from `/supported` instead of 200. */
+  supportedStatus?: number;
 }
 
 /**
@@ -73,6 +83,10 @@ export async function startMockFacilitator(
       network,
       payer: "0x857b06519E91e3A54538791bDAbd0E22373e36b66",
     },
+    verifyStatus: 200,
+    settleStatus: 200,
+    verifyDelayMs: 0,
+    settleDelayMs: 0,
     calls,
     close: async () => {},
   };
@@ -91,10 +105,18 @@ export async function startMockFacilitator(
         response.end(JSON.stringify(payload));
       };
 
+      const respond = (status: number, payload: unknown, delayMs: number): void => {
+        if (delayMs > 0) {
+          setTimeout(() => send(status, payload), delayMs);
+          return;
+        }
+        send(status, payload);
+      };
+
       switch (path) {
         case "supported":
-          if (options.failSupported) {
-            send(500, { error: "facilitator_unavailable" });
+          if (options.failSupported || (options.supportedStatus ?? 200) >= 400) {
+            send(options.supportedStatus ?? 500, { error: "facilitator_unavailable" });
             return;
           }
           send(200, {
@@ -110,10 +132,10 @@ export async function startMockFacilitator(
           });
           return;
         case "verify":
-          send(200, handle.verifyResult);
+          respond(handle.verifyStatus, handle.verifyResult, handle.verifyDelayMs);
           return;
         case "settle":
-          send(200, handle.settleResult);
+          respond(handle.settleStatus, handle.settleResult, handle.settleDelayMs);
           return;
         default:
           send(404, { error: "not_found" });

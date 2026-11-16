@@ -5,7 +5,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Ready-made exporters: `prometheusSink` / `prometheusHandler`,
+  `openTelemetrySink`, `sentryBreadcrumbSink` (no hard dependencies on those
+  stacks — pass the handles you already have).
+- `x402-lens reconcile --tx <hash>` — on-chain confirmation check for
+  `settlement_pending` (EVM + Solana public RPCs).
+- `settlement_failed` finding code for terminal settle errors (was incorrectly
+  labelled `settlement_pending`).
+- Chaos, property (`fast-check`), load-overhead, exporter, reconcile, and CLI
+  snapshot tests.
+
+### Fixed
+
+- Terminal settle failures no longer share the `settlement_pending` code, so
+  alerts that filter on that code stop treating hard failures as in-flight.
+- `validatePayloadAgainstChallenge` no longer throws on non-object input.
 
 ## [0.1.0]
 

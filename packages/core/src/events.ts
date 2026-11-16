@@ -35,7 +35,8 @@ export type FindingCode =
   | "authorization_expired"
   | "authorization_not_yet_valid"
   | "signature_mismatch"
-  | "settlement_pending";
+  | "settlement_pending"
+  | "settlement_failed";
 
 /** Reasons core reports when a verified payment is never settled. */
 export type CancelReason =

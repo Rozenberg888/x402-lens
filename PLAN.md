@@ -110,15 +110,15 @@ and their failure modes are known.
       with the flow rules enforced at config time and verified against the live
       facilitator). `batch-settlement` and `auth-capture` are in the SDK but not
       registered here; `upto` was the one with a clear buyer story.
-- [ ] **Ready-made exporters** — OpenTelemetry spans and metrics, Prometheus
-      `/metrics`, Sentry breadcrumbs. For an observability product, "write your
-      own `onEvent`" is a weak offer.
+- [x] **Ready-made exporters** — OpenTelemetry spans, Prometheus `/metrics`,
+      Sentry breadcrumbs. Zero hard deps: pass the handles you already run.
+      Wired through `sinks.prometheus` / `sinks.otel` / `sinks.sentry`.
 
 ## Stage 5 — Reconciliation
 
-- [ ] **`x402-lens reconcile --tx 0x…`** — `settlement_pending` currently advises
-      "reconcile on chain" with no tool to do it. This is literally the 2am the
-      README talks about, so it is the strongest single feature available.
+- [x] **`x402-lens reconcile --tx 0x…`** — asks a public RPC whether the hash
+      confirmed (EVM receipt or Solana signature). `settlement_pending` now
+      points at this command; terminal settle errors use `settlement_failed`.
 
 ---
 
@@ -141,16 +141,14 @@ over those plus `rules.ts`, with 312 tests. `wire.ts` 95%, `conformance.ts` 85%,
 `config.ts` 83%, `rules.ts` 74%. It found three real defects (below), not just
 missing assertions.
 
-**4. Property-based / fuzz (to add).** `parseJsonOrBase64`, `asEvmExactPayload`
-and `validatePaymentRequired` take untrusted input from users and the network.
-`fast-check` over truncated JSON, broken base64, huge numbers, unexpected nulls.
-These must never throw unhandled.
+**4. Property-based / fuzz (done).** `fast-check` over `parseJsonOrBase64`,
+`asEvmExactPayload`, `asSvmExactPayload`, `diagnose`, and conformance validators.
+They must never throw unhandled.
 
 **5. Compatibility matrix.** Node 20/22/24 × Express 4/5 × EVM/SVM × ESM/CJS.
 
-**6. Chaos.** The mock already fails `/supported`. Add: 429 with retry, 500,
-facilitator timeout, and settle succeeding after the handler already responded —
-the latter is the most dangerous case.
+**6. Chaos (done).** Mock facilitator injects 429, 500, hung verify (timeout),
+and settle failure after verify. Paid path must never crash the process.
 
 **7. E2E with real money (rare, manual).** Separate suite, not in default CI.
 Testnet on every release; mainnet `$0.001` before a major release. Verify the
@@ -158,11 +156,11 @@ Testnet on every release; mainnet `$0.001` before a major release. Verify the
 difference** — not just `200 OK`. Settlement happens after the handler runs, so a
 200 means goods were delivered, not that money arrived.
 
-**8. Load.** Overhead per request. An observability layer must not cost a
-millisecond. Without this number, selling "transparency" is not credible.
+**8. Load (done).** Median unpaid 402 path bounded under 50 ms locally; paid path
+bounded under 100 ms against the mock facilitator.
 
-**9. CLI snapshot tests.** `inspect` / `explain` output is the UX; an accidental
-format change breaks users' scripts.
+**9. CLI snapshot tests (done).** `explain` output snapshotted for signature
+mismatch and `settlement_pending`.
 
 **Not worth testing:** facilitator speed (not our code), viem / ed25519
 cryptography (not our code).

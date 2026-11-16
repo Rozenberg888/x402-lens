@@ -693,7 +693,7 @@ describe("settlement verdicts", () => {
     expect(hit?.fix).toMatch(/do not place a second payment|twice/i);
   });
 
-  it("treats any other settle failure as terminal", () => {
+  it("treats any other settle failure as terminal settlement_failed", () => {
     const findings = diagnose({
       settleResponse: {
         success: false,
@@ -702,6 +702,8 @@ describe("settlement verdicts", () => {
       },
     });
     expect(findings[0]?.severity).toBe("error");
+    expect(findings[0]?.code).toBe("settlement_failed");
+    expect(findings[0]?.fix).toMatch(/reconcile/i);
   });
 
   it("says nothing about a successful settlement", () => {

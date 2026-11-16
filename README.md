@@ -95,7 +95,7 @@ as the specification requires.
 | --- | --- |
 | `@x402-lens/core` | Events, findings engine, config, sinks. No framework, no SDK. |
 | `@x402-lens/express` | `paymentLens()` for Express 4 and 5. |
-| `x402-lens` | CLI: `inspect`, `explain`, `doctor`, `add`. |
+| `x402-lens` | CLI: `inspect`, `explain`, `doctor`, `reconcile`, `add`. |
 
 ## Configuration
 
@@ -268,15 +268,29 @@ form. Everything else comes from the SDK's public lifecycle hooks
 Sinks are composable and a failing sink never breaks a payment:
 
 ```ts
+import { prometheusHandler, PrometheusRegistry } from "@x402-lens/express";
+import { trace } from "@opentelemetry/api";
+import * as Sentry from "@sentry/node";
+
+const metrics = new PrometheusRegistry();
+
 paymentLens({
   routes: { "GET /weather": "$0.001" },
   sinks: {
     console: true,                    // compact line per event
     jsonlPath: ".x402-lens/events.jsonl",
-    onEvent: event => span.addEvent(event.type, event),  // OTel, Sentry, ...
+    onEvent: event => span.addEvent(event.type, event),
+    prometheus: metrics,              // counters + latency summary
+    otel: trace.getTracer("x402-lens"),
+    sentry: Sentry,
   },
 });
+
+app.get("/metrics", prometheusHandler(metrics));
 ```
+
+OpenTelemetry and Sentry are optional peer surfaces — neither is a dependency of
+this package. Pass the handles you already have.
 
 ## Why a request did not go through
 
@@ -286,7 +300,8 @@ at fault, the `problem`, and a `fix`. Covered causes:
 `x402_version_mismatch`, `missing_accepts`, `network_not_caip2`,
 `network_not_offered`, `amount_not_atomic`, `amount_mismatch`, `pay_to_mismatch`,
 `asset_mismatch`, `eip712_domain_mismatch`, `authorization_expired`,
-`authorization_not_yet_valid`, `signature_mismatch`, `settlement_pending`.
+`authorization_not_yet_valid`, `signature_mismatch`, `settlement_pending`,
+`settlement_failed`.
 
 Two of these are worth calling out because they catch bugs no mock surfaces:
 
@@ -313,7 +328,14 @@ naming the code, so a new error does not silently become "unknown failure".
 
 `settlement_pending` is treated as **non-terminal**. The transaction was
 broadcast and may still confirm, so the advice is to reconcile on chain, not to
-retry. `x402-lens` never claims a payment was delivered after a 402.
+retry:
+
+```
+x402-lens reconcile --tx 0x… --network eip155:84532
+```
+
+`settlement_failed` is terminal — funds did not move. `x402-lens` never claims a
+payment was delivered after a 402.
 
 ## Browser buyers
 
@@ -335,20 +357,23 @@ When enabled, headers are merged with whatever the response already has.
 x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000]
 x402-lens explain [--challenge ...] [--payment ...] [--verify ...] [--settle ...]
 x402-lens doctor [--facilitator <url>] [--network <caip2>]
+x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>]
 x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
 ```
 
 All of `--challenge`, `--payment`, `--verify`, `--settle` accept raw base64
 header values, decoded JSON, or `@file`. `doctor` exits non-zero when the
 facilitator does not list the configured network for `x402Version: 2`, so it can
-gate a deploy. `add` prints a diff and only writes with `--write`.
+gate a deploy. `reconcile` asks a public RPC whether a settlement hash confirmed
+— use it after `settlement_pending`, never retry first. `add` prints a diff and
+only writes with `--write`.
 
 ## Development
 
 ```bash
 npm install
 npm run typecheck
-npm test            # 322 tests, no network
+npm test            # unit + integration + chaos + property + load, no network
 npm run test:live   # hits https://x402.org/facilitator
 npm run test:mutation  # mutation score on the core, ~8 minutes
 npm run fixtures:record # re-record golden fixtures from the real middleware

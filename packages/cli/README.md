@@ -7,6 +7,7 @@ the full picture.
 x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000]
 x402-lens explain [--challenge ...] [--payment ...] [--verify ...] [--settle ...]
 x402-lens doctor [--facilitator <url>] [--network <caip2>] [--networks <a,b>]
+x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>]
 x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
 ```
 
@@ -32,6 +33,13 @@ With more than one network configured it also checks every one of them, because
 the SDK validates them all at startup and **exits the process** if any is
 missing — a failure that returns no 402 and no error response, only a server that
 stopped. Run `doctor` in CI so that cannot reach production.
+
+## reconcile
+
+Asks a public RPC whether a settlement transaction confirmed. Use after
+`settlement_pending` — never retry the payment until you know. Supports
+`eip155:*` (receipt status) and `solana:*` (signature lookup). Pass `--rpc` to
+override the default public endpoint.
 
 ## add
 

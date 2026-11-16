@@ -57,5 +57,9 @@ function severityBadge(severity: Finding["severity"]): string {
       return "WARN ";
     case "info":
       return "INFO ";
+    default: {
+      const _exhaustive: never = severity;
+      return _exhaustive;
+    }
   }
 }

@@ -112,22 +112,35 @@ function validateAccept(
  * @returns Violations found; empty means acceptable
  */
 export function validatePayloadAgainstChallenge(
-  payload: WirePaymentPayload,
-  required: WirePaymentRequired,
+  payload: WirePaymentPayload | unknown,
+  required: WirePaymentRequired | unknown,
 ): ConformanceIssue[] {
   const issues: ConformanceIssue[] = [];
 
-  if (payload.x402Version !== 2) {
+  // Untrusted input reaches this from the CLI and from captured JSON. Refuse
+  // anything that is not an object before touching fields — a throw here would
+  // turn a bad paste into a crashed debugger.
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return [{ field: "payment", problem: "PaymentPayload must be a JSON object." }];
+  }
+  if (typeof required !== "object" || required === null || Array.isArray(required)) {
+    return [{ field: "challenge", problem: "PaymentRequired must be a JSON object." }];
+  }
+
+  const payment = payload as WirePaymentPayload;
+  const challenge = required as WirePaymentRequired;
+
+  if (payment.x402Version !== 2) {
     issues.push({ field: "payment.x402Version", problem: "Must be 2." });
   }
 
-  const accepted = payload.accepted;
+  const accepted = payment.accepted;
   if (!accepted) {
     issues.push({ field: "payment.accepted", problem: "Required." });
     return issues;
   }
 
-  const offered = required.accepts ?? [];
+  const offered = challenge.accepts ?? [];
   const matching = offered.some(
     entry => entry.network === accepted.network && entry.scheme === accepted.scheme,
   );

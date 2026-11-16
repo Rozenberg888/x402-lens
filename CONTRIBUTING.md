@@ -34,7 +34,8 @@ That runs typecheck, tests, build, a load check on the built entry points, and a
   correct payment is worse than no diagnostic, so every new rule needs a case
   proving it stays quiet.
 - **Never claim delivery after a 402.** `settlement_pending` is non-terminal;
-  advice is to reconcile, not retry.
+  advice is `x402-lens reconcile`, not retry. Terminal settle errors use
+  `settlement_failed` — do not reuse the pending code.
 
 ## Adding a finding
 

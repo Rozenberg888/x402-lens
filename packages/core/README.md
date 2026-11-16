@@ -1,7 +1,8 @@
 # `@x402-lens/core`
 
 Framework-agnostic core for [x402-lens](../../README.md): payment events, the
-findings engine, configuration, conformance checks, and sinks.
+findings engine, configuration, conformance checks, sinks, and ready-made
+exporters (Prometheus, OpenTelemetry, Sentry — no hard dependencies).
 
 Nothing here knows about Express or about `@x402/core`, so the diagnostics work
 against captured JSON, inside a test, or from the CLI.

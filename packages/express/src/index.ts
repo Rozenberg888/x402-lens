@@ -19,21 +19,27 @@ import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import {
   EventBus,
+  PrometheusRegistry,
   callbackSink,
   consoleSink,
   diagnose,
   jsonlFileSink,
   loadConfig,
   makeEvent,
+  openTelemetrySink,
+  prometheusSink,
   resolveConfig,
+  sentryBreadcrumbSink,
   toRoutesConfig,
   type Finding,
   type LensConfig,
   type LensConfigInput,
   type LensEvent,
   type LensSink,
+  type OtelTracerLike,
   type PaymentScheme,
   type RouteInput,
+  type SentryLike,
   type WirePaymentPayload,
   type WirePaymentRequired,
   type WireSettleResponse,
@@ -63,6 +69,21 @@ export interface LensSinkOptions {
   jsonlPath?: string;
   /** Called for every event. Exceptions are caught and never reach the caller. */
   onEvent?: (event: LensEvent) => void;
+  /**
+   * Record counters for Prometheus. Pass `true` for the shared registry, or a
+   * `PrometheusRegistry` you will serve from `/metrics` via `prometheusHandler`.
+   */
+  prometheus?: boolean | PrometheusRegistry;
+  /**
+   * OpenTelemetry tracer (`trace.getTracer("x402-lens")`). Opens a short span
+   * per event. `@opentelemetry/api` is not a dependency of this package.
+   */
+  otel?: OtelTracerLike;
+  /**
+   * Sentry-compatible handle (`import * as Sentry from "@sentry/node"`).
+   * Records each event as a breadcrumb. Sentry is not a dependency.
+   */
+  sentry?: SentryLike;
 }
 
 /** Short route form: a bare price, or the full per-route options. */
@@ -367,6 +388,17 @@ function buildSinks(sinkOptions: LensSinkOptions | undefined): LensSink[] {
   if (sinkOptions?.console ?? true) sinks.push(consoleSink());
   if (sinkOptions?.jsonlPath) sinks.push(jsonlFileSink(sinkOptions.jsonlPath));
   if (sinkOptions?.onEvent) sinks.push(callbackSink(sinkOptions.onEvent));
+  if (sinkOptions?.prometheus) {
+    sinks.push(
+      prometheusSink(
+        sinkOptions.prometheus === true
+          ? undefined
+          : sinkOptions.prometheus,
+      ),
+    );
+  }
+  if (sinkOptions?.otel) sinks.push(openTelemetrySink(sinkOptions.otel));
+  if (sinkOptions?.sentry) sinks.push(sentryBreadcrumbSink(sinkOptions.sentry));
   return sinks;
 }
 
@@ -594,3 +626,7 @@ function settleFromError(error: unknown): WireSettleResponse | undefined {
 }
 
 export type { HTTPRequestContext };
+export {
+  PrometheusRegistry,
+  prometheusHandler,
+} from "@x402-lens/core";

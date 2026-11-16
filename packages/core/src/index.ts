@@ -49,6 +49,16 @@ export {
 export type { LensSink } from "./sinks.js";
 export { EventBus, callbackSink, consoleSink, jsonlFileSink } from "./sinks.js";
 
+export type { OtelTracerLike, SentryLike } from "./exporters.js";
+export {
+  PrometheusRegistry,
+  defaultPrometheusRegistry,
+  openTelemetrySink,
+  prometheusHandler,
+  prometheusSink,
+  sentryBreadcrumbSink,
+} from "./exporters.js";
+
 export type {
   AssetPrice,
   FacilitatorHeaders,

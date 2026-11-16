@@ -62,8 +62,8 @@ export interface LensSinkOptions {
   onEvent?: (event: LensEvent) => void;
 }
 
-/** Routes as a short map, e.g. `{ "GET /weather": "$0.001" }`. */
-export type RouteMap = Record<string, string>;
+/** Short route form: a bare price, or the full per-route options. */
+export type RouteMap = Record<string, string | Omit<RouteInput, "route">>;
 
 export interface PaymentLensOptions extends Omit<LensConfigInput, "routes"> {
   /**
@@ -194,7 +194,11 @@ export async function paymentLensAsync(
 function normaliseRouteInput(routes: PaymentLensOptions["routes"]): RouteInput[] | undefined {
   if (!routes) return undefined;
   if (Array.isArray(routes)) return routes;
-  return Object.entries(routes).map(([route, price]) => ({ route, price }));
+  // A bare string is the common case; an object allows per-route options such as
+  // `paymentFlow` without dropping to the array form.
+  return Object.entries(routes).map(([route, value]) =>
+    typeof value === "string" ? { route, price: value } : { route, ...value },
+  );
 }
 
 function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens {

@@ -1,0 +1,43 @@
+{
+  "note": "GET /weather on a route priced $0.001 on Base Sepolia and Solana devnet, with cors enabled. Resource URL is stabilised: the recorder listens on an ephemeral port.",
+  "capturedAt": "2026-11-16T21:08:42.925Z",
+  "facilitator": "https://x402.org/facilitator",
+  "body": {
+    "x402Version": 2,
+    "error": "Payment required",
+    "resource": {
+      "url": "https://api.example.com/weather",
+      "description": "",
+      "mimeType": ""
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "eip155:84532",
+        "amount": "1000",
+        "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "name": "USDC",
+          "version": "2"
+        }
+      },
+      {
+        "scheme": "exact",
+        "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        "amount": "1000",
+        "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        "payTo": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "feePayer": "CKPKJWNdJEqa81x7CkZ14BVPiY6y16Sxs7owznqtWYp5",
+          "transactionVersions": [
+            0,
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

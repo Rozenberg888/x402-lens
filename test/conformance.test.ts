@@ -106,6 +106,114 @@ describe("validatePayloadAgainstChallenge", () => {
   });
 });
 
+describe("validatePaymentRequired field-level rules", () => {
+  // Mutation testing showed these branches were never exercised: the original
+  // tests removed whole objects rather than individual fields, so a validator
+  // that silently accepted a missing `scheme` or an empty `payTo` stayed green.
+  const withAccept = (overrides: Record<string, unknown>) =>
+    ({
+      x402Version: 2,
+      resource: { url: "https://example.com/x" },
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:84532",
+          amount: "10000",
+          asset: "0x0",
+          payTo: "0x0",
+          maxTimeoutSeconds: 60,
+          ...overrides,
+        },
+      ],
+    }) as unknown as WirePaymentRequired;
+
+  it("requires a non-empty scheme", () => {
+    expect(validatePaymentRequired(withAccept({ scheme: "" })).some(i => i.field === "accepts[0].scheme")).toBe(true);
+    expect(validatePaymentRequired(withAccept({ scheme: undefined })).some(i => i.field === "accepts[0].scheme")).toBe(true);
+    expect(validatePaymentRequired(withAccept({ scheme: 42 })).some(i => i.field === "accepts[0].scheme")).toBe(true);
+  });
+
+  it("requires a non-empty asset", () => {
+    expect(validatePaymentRequired(withAccept({ asset: "" })).some(i => i.field === "accepts[0].asset")).toBe(true);
+    expect(validatePaymentRequired(withAccept({ asset: undefined })).some(i => i.field === "accepts[0].asset")).toBe(true);
+  });
+
+  it("requires a non-empty payTo", () => {
+    expect(validatePaymentRequired(withAccept({ payTo: "" })).some(i => i.field === "accepts[0].payTo")).toBe(true);
+    expect(validatePaymentRequired(withAccept({ payTo: undefined })).some(i => i.field === "accepts[0].payTo")).toBe(true);
+  });
+
+  it("rejects a non-positive or non-numeric timeout", () => {
+    for (const value of [0, -1, "60", undefined, null]) {
+      expect(
+        validatePaymentRequired(withAccept({ maxTimeoutSeconds: value })).some(
+          i => i.field === "accepts[0].maxTimeoutSeconds",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects an accept entry that is not an object", () => {
+    const issues = validatePaymentRequired({
+      x402Version: 2,
+      resource: { url: "https://example.com/x" },
+      accepts: [null],
+    } as unknown as WirePaymentRequired);
+    expect(issues.some(i => i.field === "accepts[0]")).toBe(true);
+  });
+
+  it("rejects an empty resource URL", () => {
+    const issues = validatePaymentRequired({
+      x402Version: 2,
+      resource: { url: "" },
+      accepts: [],
+    } as unknown as WirePaymentRequired);
+    expect(issues.some(i => i.field === "resource.url")).toBe(true);
+  });
+
+  it("reports every broken field rather than stopping at the first", () => {
+    // A validator that returned early would hide two thirds of a broken config.
+    const issues = validatePaymentRequired(
+      withAccept({ scheme: "", asset: "", payTo: "", maxTimeoutSeconds: 0 }),
+    );
+    const fields = issues.map(issue => issue.field);
+    expect(fields).toContain("accepts[0].scheme");
+    expect(fields).toContain("accepts[0].asset");
+    expect(fields).toContain("accepts[0].payTo");
+    expect(fields).toContain("accepts[0].maxTimeoutSeconds");
+  });
+});
+
+describe("validatePayloadAgainstChallenge edge cases", () => {
+  it("flags a payload that declares a version other than 2", () => {
+    const issues = validatePayloadAgainstChallenge(paymentPayload({ x402Version: 1 }), challenge());
+    expect(issues.some(issue => issue.field === "payment.x402Version")).toBe(true);
+  });
+
+  it("flags a payload with no accepted requirement", () => {
+    const { accepted: _omitted, ...withoutAccepted } = paymentPayload();
+    const issues = validatePayloadAgainstChallenge(withoutAccepted, challenge());
+    expect(issues.some(issue => issue.field === "payment.accepted")).toBe(true);
+  });
+
+  it("accepts a payload that echoes the second offered network", () => {
+    // The counterpart to the accepts[0] bug: matching must consider every offer.
+    const other = {
+      scheme: "exact",
+      network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      amount: "10000",
+      asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      maxTimeoutSeconds: 60,
+    };
+    const twoNetworks = challenge({
+      accepts: [...(challenge().accepts ?? []), other],
+    });
+    const issues = validatePayloadAgainstChallenge(paymentPayload({ accepted: other }), twoNetworks);
+    expect(issues).toEqual([]);
+  });
+});
+
 describe("checkCors", () => {
   it("passes when all three headers are exposed", () => {
     const report = checkCors({

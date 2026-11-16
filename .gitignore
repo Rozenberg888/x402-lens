@@ -16,6 +16,9 @@ x402.config.local.json
 npm-debug.log*
 coverage/
 
+# Mutation testing output — generated, large, and rebuilt on demand.
+reports/
+
 # Editor and OS noise.
 .DS_Store
 Thumbs.db

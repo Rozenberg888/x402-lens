@@ -76,6 +76,9 @@ is emitted by a test. — **met locally**; the workflows run once pushed.
       the reason it exists.
 - [ ] **Golden fixtures** — real payloads captured from x402.org and CDP,
       committed under `test/fixtures/`. Catches specification drift before users do.
+      — **done for x402.org**: `npm run fixtures:record` writes
+      `test/fixtures/recorded/`, and `test/contract.recorded.test.ts` asserts the
+      validator agrees with them. Capture from CDP when credentials exist.
 
 **Exit criterion:** a Solana payment failure produces a specific finding, not an
 empty list. — **met** for configuration-level failures; transaction-level
@@ -127,6 +130,11 @@ facilitator — correct approach. Gap: no golden fixtures from real facilitators
 **3. Mutation testing of the findings engine (to add).** For a diagnostic tool
 this is not a luxury. The `accepts[0]` bug fixed in `0.1.0` was a green tests
 suite over wrong logic; Stryker is what catches the next one.
+— **added**. `npm run test:mutation`, thresholds in `stryker.config.mjs`.
+Baseline when introduced: 68.75% over `wire`/`conformance`/`config`; now 78%
+over those plus `rules.ts`, with 312 tests. `wire.ts` 95%, `conformance.ts` 85%,
+`config.ts` 83%, `rules.ts` 74%. It found three real defects (below), not just
+missing assertions.
 
 **4. Property-based / fuzz (to add).** `parseJsonOrBase64`, `asEvmExactPayload`
 and `validatePaymentRequired` take untrusted input from users and the network.

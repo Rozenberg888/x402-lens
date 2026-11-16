@@ -89,15 +89,16 @@ export interface WireSettleResponse {
   extensions?: Record<string, unknown>;
 }
 
-const DECIMAL_POINT = /[.,]/;
 const CAIP2_PATTERN = /^[a-z][a-z0-9]{1,31}:[A-Za-z0-9-]{1,64}$/;
 
 /** True when `value` is an integer string, which is what atomic units are. */
 export function isAtomicAmount(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  if (value.length === 0) return false;
-  if (DECIMAL_POINT.test(value)) return false;
-  return /^\d+$/.test(value);
+  // A single regex covers every case: digits only, no decimal point, no sign,
+  // no surrounding whitespace, at least one character. Separate guards for
+  // emptiness and decimal points were unreachable once the pattern is anchored,
+  // and mutation testing flagged them as untested branches only because they
+  // could not run.
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
 export function isCaip2Network(value: unknown): value is string {
@@ -131,10 +132,14 @@ export function asSvmExactPayload(
 ): WireSvmExactPayload | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const inner = (payload as WirePaymentPayload).payload;
-  if (typeof inner !== "object" || inner === null) return undefined;
+  // `null` satisfies typeof "object", so it needs its own check; arrays and other
+  // objects fall through to the missing-field check below.
+  if (inner === null || typeof inner !== "object") return undefined;
   const candidate = inner as Partial<WireSvmExactPayload>;
-  if (typeof candidate.transaction !== "string") return undefined;
-  if (candidate.transaction.length === 0) return undefined;
+  // An empty transaction carries nothing to settle, so it is not a payment.
+  if (typeof candidate.transaction !== "string" || candidate.transaction.length === 0) {
+    return undefined;
+  }
   return candidate as WireSvmExactPayload;
 }
 
@@ -154,11 +159,11 @@ export function asEvmExactPayload(
 ): WireEvmExactPayload | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const inner = (payload as WirePaymentPayload).payload;
-  if (typeof inner !== "object" || inner === null) return undefined;
+  if (inner === null || typeof inner !== "object") return undefined;
   const candidate = inner as Partial<WireEvmExactPayload>;
   if (typeof candidate.signature !== "string") return undefined;
   const auth = candidate.authorization;
-  if (typeof auth !== "object" || auth === null) return undefined;
+  if (auth === null || typeof auth !== "object") return undefined;
   if (typeof auth.from !== "string" || typeof auth.to !== "string") {
     return undefined;
   }

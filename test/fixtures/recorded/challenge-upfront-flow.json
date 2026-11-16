@@ -1,0 +1,44 @@
+{
+  "note": "POST /generate with paymentFlow: upfront — the only difference from the default challenge is extra.paymentFlow.",
+  "capturedAt": "2026-11-16T21:08:42.933Z",
+  "body": {
+    "x402Version": 2,
+    "error": "Payment required",
+    "resource": {
+      "url": "https://api.example.com/weather",
+      "description": "",
+      "mimeType": ""
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "eip155:84532",
+        "amount": "50000",
+        "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "name": "USDC",
+          "version": "2",
+          "paymentFlow": "upfront"
+        }
+      },
+      {
+        "scheme": "exact",
+        "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        "amount": "50000",
+        "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        "payTo": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "paymentFlow": "upfront",
+          "feePayer": "CKPKJWNdJEqa81x7CkZ14BVPiY6y16Sxs7owznqtWYp5",
+          "transactionVersions": [
+            0,
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

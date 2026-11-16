@@ -453,6 +453,106 @@ describe("solana offers", () => {
   });
 });
 
+describe("facilitator reason codes are mapped to findings", () => {
+  // Mutation testing reported most of these branches as uncovered: the original
+  // tests exercised two codes out of a dozen, so a wrong mapping for, say,
+  // `recipient_mismatch` would have shipped silently. The table form makes the
+  // mapping itself the assertion, and adding a code without adding a row fails
+  // the compile step because the switch is exhaustive.
+  const table: Array<{ code: string; finding: string; field: string }> = [
+    {
+      code: "invalid_exact_evm_payload_signature",
+      finding: "signature_mismatch",
+      field: "payment.payload.signature",
+    },
+    {
+      code: "invalid_exact_evm_payload_authorization_value_mismatch",
+      finding: "amount_mismatch",
+      field: "payment.payload.authorization.value",
+    },
+    {
+      code: "invalid_exact_evm_payload_authorization_value",
+      finding: "amount_mismatch",
+      field: "payment.payload.authorization.value",
+    },
+    {
+      code: "amount_too_low",
+      finding: "amount_mismatch",
+      field: "payment.payload.authorization.value",
+    },
+    {
+      code: "invalid_exact_evm_payload_recipient_mismatch",
+      finding: "pay_to_mismatch",
+      field: "payment.payload.authorization.to",
+    },
+    {
+      code: "invalid_exact_evm_payload_authorization_valid_before",
+      finding: "authorization_expired",
+      field: "payment.payload.authorization.validBefore",
+    },
+    {
+      code: "invalid_exact_evm_payload_authorization_valid_after",
+      finding: "authorization_not_yet_valid",
+      field: "payment.payload.authorization.validAfter",
+    },
+    {
+      code: "invalid_network",
+      finding: "network_not_offered",
+      field: "payment.accepted.network",
+    },
+    {
+      code: "invalid_payload",
+      finding: "x402_version_mismatch",
+      field: "payment.payload",
+    },
+  ];
+
+  for (const row of table) {
+    it(`maps ${row.code} to ${row.finding}`, () => {
+      const findings = diagnose({
+        now: NOW,
+        verifyResponse: { isValid: false, invalidReason: row.code },
+      });
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.code).toBe(row.finding);
+      expect(findings[0]?.field).toBe(row.field);
+      expect(findings[0]?.severity).toBe("error");
+      // Every fix must be actionable, not just a restatement of the code.
+      expect(findings[0]?.fix.length).toBeGreaterThan(20);
+    });
+  }
+
+  it("carries the facilitator's message into the problem", () => {
+    const findings = diagnose({
+      now: NOW,
+      verifyResponse: {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_signature",
+        invalidMessage: "signature does not recover",
+      },
+    });
+    expect(findings[0]?.problem).toContain("signature does not recover");
+  });
+
+  it("flags an unknown code as a warning naming the code, never as success", () => {
+    // A new facilitator code must not be swallowed: silence here would read as
+    // "no problem found", which is the one wrong answer.
+    const findings = diagnose({
+      now: NOW,
+      verifyResponse: { isValid: false, invalidReason: "brand_new_reason" },
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.severity).toBe("warn");
+    expect(findings[0]?.problem).toContain("brand_new_reason");
+  });
+
+  it("uses 'unknown' when the facilitator omits a reason entirely", () => {
+    const findings = diagnose({ now: NOW, verifyResponse: { isValid: false } });
+    expect(findings[0]?.problem).toContain("unknown");
+  });
+});
+
 describe("pay_to_mismatch", () => {
   it("flags a different recipient", () => {
     const other = "0x0000000000000000000000000000000000000001";

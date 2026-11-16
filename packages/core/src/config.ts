@@ -648,11 +648,20 @@ function metadata(entry: Partial<RoutePrice>): Partial<RoutePrice> {
 }
 
 function splitRoute(route: string, index: number): { method: string; path: string } {
+  // Trim first, but remember that `"GET "` is a method with no path, not a path
+  // called "GET": trimming away the separating space silently turned one into
+  // the other and produced a route nobody could ever hit.
   const trimmed = route.trim();
+  if (trimmed.length === 0) {
+    throw new ConfigError(`routes[${index}]`, "Route is empty. Expected a route such as \"GET /weather\".");
+  }
+
   const spaceIndex = trimmed.indexOf(" ");
   if (spaceIndex === -1) {
+    assertPath(trimmed, route, index);
     return { method: "GET", path: trimmed };
   }
+
   const method = trimmed.slice(0, spaceIndex).toUpperCase();
   const path = trimmed.slice(spaceIndex + 1).trim();
   if (!path) {
@@ -661,7 +670,17 @@ function splitRoute(route: string, index: number): { method: string; path: strin
       `Route "${route}" has a method but no path.`,
     );
   }
+  assertPath(path, route, index);
   return { method, path };
+}
+
+/** A path must be rooted, or Express cannot match it to anything. */
+function assertPath(path: string, route: string, index: number): void {
+  if (path.startsWith("/")) return;
+  throw new ConfigError(
+    `routes[${index}]`,
+    `Route "${route}" resolves to path "${path}", which does not start with "/". Write it as "GET /${path}" — a route key is "<METHOD> <path>", and without the slash it silently protects nothing.`,
+  );
 }
 
 interface FileConfig extends LensConfigInput {

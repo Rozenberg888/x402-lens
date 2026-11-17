@@ -9,6 +9,9 @@ wraps it and adds the part that is missing in production: a structured event for
 every step, and a diagnosis that tells you *why* a payment failed and what to
 change.
 
+**New here?** Read the benefit-first guide:
+[Ship paid AI endpoints that explain themselves](docs/ai-micropayments-with-x402-lens.md).
+
 ```ts
 import express from "express";
 import { paymentLens } from "@x402-lens/express";

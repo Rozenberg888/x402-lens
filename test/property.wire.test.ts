@@ -98,8 +98,11 @@ describe("property: parseJsonOrBase64", () => {
       fc.property(
         fc.dictionary(fc.string(), fc.jsonValue()),
         obj => {
+          // JSON.stringify collapses -0 to 0, so compare against the JSON form,
+          // not the in-memory IEEE value — that is what the wire actually carries.
+          const jsonForm = JSON.parse(JSON.stringify(obj)) as unknown;
           const encoded = Buffer.from(JSON.stringify(obj), "utf8").toString("base64");
-          expect(parseJsonOrBase64(encoded, "input")).toEqual(obj);
+          expect(parseJsonOrBase64(encoded, "input")).toEqual(jsonForm);
         },
       ),
       { numRuns: 50 },

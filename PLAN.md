@@ -90,10 +90,10 @@ inspection needs the Solana SDK and is out of scope by design.
       CI green on all six matrix jobs. The first run failed the packaging job
       because the script assumed npm's Windows layout — fixed by discovering the
       path instead, which is exactly the class of bug CI exists to find.
-- [ ] npm organisation `@x402-lens`, publish in dependency order via
-      `npm run publish:npm` (core → express → cli). Names are free. Version is
-      bumped to `0.2.0`. **Blocked only on `npm login`** — run that locally,
-      then `npm run publish:npm`.
+- [x] npm organisation `@x402-lens`, published `0.2.0`:
+      `@x402-lens/core`, `@x402-lens/express`, `@x402-lens/cli` (bin `x402-lens`).
+      CLI is scoped under the org; unscoped `x402-lens` was blocked by the
+      granular token (org-only).
 - [ ] README with copy-paste examples that were actually run.
 - [ ] 10–20 real users. Goal is not revenue, it is learning what hurts.
 

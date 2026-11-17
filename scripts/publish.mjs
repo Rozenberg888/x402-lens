@@ -18,7 +18,7 @@ const ROOT = resolve(import.meta.dirname, "..");
 const PACKAGES = [
   { name: "@x402-lens/core", dir: "packages/core" },
   { name: "@x402-lens/express", dir: "packages/express" },
-  { name: "x402-lens", dir: "packages/cli" },
+  { name: "@x402-lens/cli", dir: "packages/cli" },
 ];
 
 /**

@@ -1,5 +1,5 @@
 {
-  "name": "x402-lens",
+  "name": "@x402-lens/cli",
   "version": "0.2.0",
   "description": "CLI for x402-lens: inspect x402 v2 endpoints, explain failed payments, audit facilitator config",
   "license": "MIT",
@@ -14,7 +14,7 @@
   },
   "type": "module",
   "bin": {
-    "x402-lens": "./dist/index.js"
+    "x402-lens": "dist/index.js"
   },
   "files": [
     "dist",

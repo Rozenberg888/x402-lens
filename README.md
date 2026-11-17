@@ -95,7 +95,7 @@ as the specification requires.
 | --- | --- |
 | `@x402-lens/core` | Events, findings engine, config, sinks. No framework, no SDK. |
 | `@x402-lens/express` | `paymentLens()` for Express 4 and 5. |
-| `x402-lens` | CLI: `inspect`, `explain`, `doctor`, `reconcile`, `add`. |
+| `@x402-lens/cli` (`x402-lens`) | CLI: `inspect`, `explain`, `doctor`, `reconcile`, `add`. |
 
 ## Configuration
 

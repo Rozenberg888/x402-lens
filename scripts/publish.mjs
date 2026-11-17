@@ -46,6 +46,12 @@ function npm(args, options = {}) {
 
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
+  const skipChecks = process.argv.includes("--skip-checks");
+  const otpFlag = process.argv.findIndex(arg => arg === "--otp");
+  const otp =
+    otpFlag !== -1
+      ? process.argv[otpFlag + 1]
+      : process.env.NPM_OTP;
 
   const who = npm(["whoami"], { allowFail: true });
   if (who.status !== 0) {
@@ -58,13 +64,17 @@ async function main() {
   }
   process.stdout.write(`npm user: ${who.stdout.trim()}\n`);
 
-  process.stdout.write("Running release checks once before publish…\n");
-  const release = npm(["run", "release"], { allowFail: true });
-  process.stdout.write(release.stdout);
-  if (release.stderr) process.stderr.write(release.stderr);
-  if (release.status !== 0) {
-    process.stderr.write("Release checks failed. Fix them before publishing.\n");
-    return release.status ?? 1;
+  if (!skipChecks) {
+    process.stdout.write("Running release checks once before publish…\n");
+    const release = npm(["run", "release"], { allowFail: true });
+    process.stdout.write(release.stdout);
+    if (release.stderr) process.stderr.write(release.stderr);
+    if (release.status !== 0) {
+      process.stderr.write("Release checks failed. Fix them before publishing.\n");
+      return release.status ?? 1;
+    }
+  } else {
+    process.stdout.write("Skipping release checks (--skip-checks).\n");
   }
 
   for (const pkg of PACKAGES) {
@@ -83,11 +93,21 @@ async function main() {
       "--ignore-scripts",
     ];
     if (dryRun) args.push("--dry-run");
+    if (otp) {
+      args.push("--otp", otp);
+    }
 
     const published = npm(args, { allowFail: true });
     process.stdout.write(published.stdout);
     if (published.stderr) process.stderr.write(published.stderr);
     if (published.status !== 0) {
+      if ((published.stderr + published.stdout).includes("Two-factor authentication")) {
+        process.stderr.write(
+          "\nPublish requires 2FA. Enable it at https://www.npmjs.com/settings/~/security\n" +
+            "then re-run with a fresh code:\n\n" +
+            "  npm run publish:npm -- --skip-checks --otp 123456\n",
+        );
+      }
       process.stderr.write(`Failed to publish ${pkg.name}. Stopping.\n`);
       return published.status ?? 1;
     }
@@ -101,7 +121,7 @@ async function main() {
   }
 
   process.stdout.write("\nAll packages published.\n");
-  process.stdout.write("Next: git tag v0.2.0 && git push origin v0.2.0\n");
+  process.stdout.write("Next: git push origin v0.2.0\n");
   return 0;
 }
 

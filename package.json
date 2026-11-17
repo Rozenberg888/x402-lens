@@ -25,7 +25,8 @@
     "fixtures:record": "tsx scripts/record-fixtures.mjs",
     "test:mutation": "stryker run",
     "release": "npm run check:versions && npm run typecheck && npm test && npm run build && npm run check:dist && npm run check:pack",
-    "publish:npm": "node scripts/publish.mjs"
+    "publish:npm": "node scripts/publish.mjs",
+    "pages:build": "node scripts/build-pages.mjs"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^8.7.1",
@@ -34,6 +35,7 @@
     "@types/node": "^22.13.4",
     "express": "^4.21.2",
     "fast-check": "^4.10.2",
+    "marked": "^15.0.12",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
     "vitest": "^2.1.9"

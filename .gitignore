@@ -19,6 +19,9 @@ coverage/
 # Mutation testing output — generated, large, and rebuilt on demand.
 reports/
 
+# Generated GitHub Pages site (built in CI).
+site/
+
 # Editor and OS noise.
 .DS_Store
 Thumbs.db

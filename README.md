@@ -10,7 +10,8 @@ every step, and a diagnosis that tells you *why* a payment failed and what to
 change.
 
 **New here?** Read the benefit-first guide:
-[Ship paid AI endpoints that explain themselves](docs/ai-micropayments-with-x402-lens.md).
+[Ship paid AI endpoints that explain themselves](https://rozenberg888.github.io/x402-lens/ai-micropayments-with-x402-lens.html)
+([source](docs/ai-micropayments-with-x402-lens.md)).
 
 ```ts
 import express from "express";

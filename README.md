@@ -162,10 +162,10 @@ before a deploy.
 
 `X402_FACILITATOR_TOKEN` sends `Authorization: Bearer …` to `/verify`,
 `/settle`, and `/supported`. For per-endpoint credentials, pass
-`facilitatorHeaders: { verify: {...}, settle: {...} }` — the SDK requires that
-per-path shape and rejects a flat headers object. To replace the client
-entirely (an in-process facilitator, a signing proxy), pass
-`facilitatorClient`.
+`facilitatorHeaders: { verify: {...}, settle: {...} }` — that per-path shape is
+required, and a flat headers object is rejected at config time (`ConfigError`)
+rather than on the first payment request. To replace the client entirely (an
+in-process facilitator, a signing proxy), pass `facilitatorClient`.
 
 ## Metered pricing with `upto`
 

@@ -145,4 +145,117 @@ describe("facilitator chaos", () => {
       payer: PAYER,
     };
   });
+
+  it("emits payment.settle_failed with populated findings on terminal settle failure", async () => {
+    const events: Array<{ type: string; findings?: Array<{ code: string }>; reason?: string }> =
+      [];
+    const localFacilitator = await startMockFacilitator({ network: NETWORK });
+    const lens = paymentLens({
+      facilitatorUrl: localFacilitator.url,
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      sinks: {
+        console: false,
+        onEvent: event => {
+          events.push(event as { type: string; findings?: Array<{ code: string }>; reason?: string });
+        },
+      },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.get("/weather", (_req, res) => res.json({ ok: true }));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const unpaid = await fetch(`${localBase}/weather`);
+      const header = unpaid.headers.get("payment-required");
+      if (!header) throw new Error("missing challenge");
+      const paymentRequired = decodePaymentRequiredHeader(
+        header,
+      ) as unknown as WirePaymentRequired;
+
+      localFacilitator.settleResult = {
+        success: false,
+        errorReason: "insufficient_funds",
+        transaction: "",
+        network: NETWORK,
+        payer: PAYER,
+      };
+
+      const response = await fetch(`${localBase}/weather`, {
+        headers: { "PAYMENT-SIGNATURE": payload(paymentRequired) },
+      });
+      expect(response.status).toBe(402);
+
+      const settleFailed = events.find(event => event.type === "payment.settle_failed");
+      expect(settleFailed).toBeDefined();
+      expect(settleFailed?.reason).toBe("insufficient_funds");
+      expect(settleFailed?.findings?.map(finding => finding.code)).toContain("settlement_failed");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
+      await localFacilitator.close();
+    }
+  });
+
+  it("emits settlement_pending finding on non-terminal settle failure", async () => {
+    const events: Array<{ type: string; findings?: Array<{ code: string }> }> = [];
+    const localFacilitator = await startMockFacilitator({ network: NETWORK });
+    const lens = paymentLens({
+      facilitatorUrl: localFacilitator.url,
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      sinks: {
+        console: false,
+        onEvent: event => {
+          events.push(event as { type: string; findings?: Array<{ code: string }> });
+        },
+      },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.get("/weather", (_req, res) => res.json({ ok: true }));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const unpaid = await fetch(`${localBase}/weather`);
+      const header = unpaid.headers.get("payment-required");
+      if (!header) throw new Error("missing challenge");
+      const paymentRequired = decodePaymentRequiredHeader(
+        header,
+      ) as unknown as WirePaymentRequired;
+
+      localFacilitator.settleResult = {
+        success: false,
+        errorReason: "settlement_pending",
+        transaction: `0x${"22".repeat(32)}`,
+        network: NETWORK,
+        payer: PAYER,
+      };
+
+      const response = await fetch(`${localBase}/weather`, {
+        headers: { "PAYMENT-SIGNATURE": payload(paymentRequired) },
+      });
+      expect(response.status).toBe(402);
+
+      const settleFailed = events.find(event => event.type === "payment.settle_failed");
+      expect(settleFailed?.findings?.map(finding => finding.code)).toContain("settlement_pending");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
+      await localFacilitator.close();
+    }
+  });
 });

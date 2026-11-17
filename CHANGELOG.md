@@ -11,6 +11,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stdout with a stable `exitCode` field for CI and agent consumers.
 - GitHub issue template **Integration report** for outside failure modes.
 
+## [0.2.1] — 2026-11-17
+
+### Fixed
+
+- `payment.settle_failed` events now carry populated `findings` by recovering
+  the settle body from SDK `SettleError` fields (`errorReason` / `transaction`
+  on the error itself), matching CLI `explain --settle` depth (Argus Lab seal
+  0023).
+- Flat `facilitatorHeaders` (e.g. `{ Authorization: "…" }`) throw `ConfigError`
+  at config time instead of surfacing as HTTP 500 on the first payment request.
+
 ## [0.2.0] — 2026-11-17
 
 ### Added

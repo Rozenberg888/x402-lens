@@ -30,6 +30,7 @@ import {
   prometheusSink,
   resolveConfig,
   sentryBreadcrumbSink,
+  settleResponseFromError,
   toRoutesConfig,
   type Finding,
   type LensConfig,
@@ -368,9 +369,9 @@ function safeCall<T>(read: () => T): T | undefined {
  * Build the SDK facilitator client, carrying auth headers and a request
  * timeout when configured.
  *
- * The SDK requires auth headers keyed by endpoint; passing a flat object throws
- * at request time, so the shape is validated once here rather than surfacing as
- * a failed payment later.
+ * Auth headers must be keyed by facilitator path (`verify` / `settle` /
+ * `supported`). Flat objects are rejected by `resolveConfig` before this runs,
+ * so a misconfigured client never reaches the first payment request as HTTP 500.
  */
 function buildFacilitatorClient(config: LensConfig): HTTPFacilitatorClient {
   const authHeaders = config.facilitatorHeaders;
@@ -557,7 +558,7 @@ function attachHooks(server: x402ResourceServer, bus: EventBus, config: LensConf
 
   server.onSettleFailure(async context => {
     const requirements = context.requirements as unknown as RequirementsShape;
-    const settle = settleFromError(context.error);
+    const settle = settleResponseFromError(context.error);
     bus.emit(
       makeEvent<LensEvent>({
         ...baseEvent(requirements, config, settle?.payer),
@@ -612,17 +613,6 @@ function syntheticChallenge(requirements: RequirementsShape): WirePaymentRequire
     x402Version: 2,
     accepts: [requirements as unknown as NonNullable<WirePaymentRequired["accepts"]>[number]],
   };
-}
-
-/** Settlement failures arrive as a thrown error carrying the settle response. */
-function settleFromError(error: unknown): WireSettleResponse | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const candidate = error as {
-    settleResponse?: WireSettleResponse;
-    result?: WireSettleResponse;
-    body?: WireSettleResponse;
-  };
-  return candidate.settleResponse ?? candidate.result ?? candidate.body;
 }
 
 export type { HTTPRequestContext };

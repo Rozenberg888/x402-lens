@@ -39,6 +39,8 @@ export {
 export type { DiagnosisInput } from "./findings/rules.js";
 export { diagnose } from "./findings/rules.js";
 
+export { settleResponseFromError } from "./settle-error.js";
+
 export {
   formatEventLine,
   formatFinding,

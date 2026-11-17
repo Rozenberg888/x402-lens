@@ -137,7 +137,7 @@ export interface LensConfig {
    *
    * For facilitators behind an API key. Each path gets its own object because
    * that is the shape `@x402/core` requires — a flat headers object is rejected
-   * by the SDK, since it would silently drop auth on every call.
+   * at config time (`ConfigError`), before the first payment request.
    */
   facilitatorHeaders?: FacilitatorHeaders;
   /** Per-request timeout for facilitator calls, milliseconds. SDK default: 90000. */
@@ -613,18 +613,27 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
+const FACILITATOR_HEADER_PATHS = ["verify", "settle", "supported", "bazaar"] as const;
+
 /**
  * Build facilitator auth headers.
  *
  * A single token applies to every endpoint, which is what an API-key
  * facilitator expects. `facilitatorHeaders` wins when a facilitator needs
  * different credentials per endpoint.
+ *
+ * Flat header objects (e.g. `{ Authorization: "Bearer …" }`) are rejected here
+ * so misconfig fails at startup — the SDK would otherwise throw on the first
+ * facilitator call and surface as HTTP 500.
  */
 function resolveFacilitatorHeaders(
   input: ResolveConfigInput,
   env: Record<string, string | undefined>,
 ): FacilitatorHeaders | undefined {
-  if (input.facilitatorHeaders) return input.facilitatorHeaders;
+  if (input.facilitatorHeaders) {
+    assertFacilitatorHeadersShape(input.facilitatorHeaders);
+    return input.facilitatorHeaders;
+  }
 
   const token = pickString(env.X402_FACILITATOR_TOKEN);
   if (!token) return undefined;
@@ -635,6 +644,27 @@ function resolveFacilitatorHeaders(
     settle: { ...headers },
     supported: { ...headers },
   };
+}
+
+/**
+ * Mirror the SDK's createAuthHeaders path-key check so a flat object never
+ * reaches the first payment request.
+ */
+function assertFacilitatorHeadersShape(headers: FacilitatorHeaders): void {
+  const record = headers as Record<string, unknown>;
+  const isHeaderObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+  const hasPathKey = FACILITATOR_HEADER_PATHS.some(key => isHeaderObject(record[key]));
+  const looksFlat =
+    !hasPathKey && Object.values(record).some(value => !isHeaderObject(value));
+
+  if (looksFlat) {
+    throw new ConfigError(
+      "facilitatorHeaders",
+      'facilitatorHeaders must be keyed by facilitator path, e.g. { verify: { Authorization: "…" }, settle: { … } }. A flat headers object is rejected at config time.',
+    );
+  }
 }
 
 function normaliseRoutes(raw: RouteInput[] | undefined): RoutePrice[] {

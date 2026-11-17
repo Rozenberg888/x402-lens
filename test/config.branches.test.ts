@@ -358,6 +358,33 @@ describe("facilitator auth", () => {
     expect(config.facilitatorHeaders).toEqual({ settle: { "x-key": "explicit" } });
   });
 
+  it("rejects a flat facilitatorHeaders object at config time", () => {
+    expectConfigError(
+      () =>
+        resolveConfig(
+          input({
+            facilitatorHeaders: { Authorization: "Bearer flat-token" },
+          }),
+        ),
+      "facilitatorHeaders",
+    );
+  });
+
+  it("accepts per-path facilitatorHeaders including bazaar", () => {
+    const config = resolveConfig(
+      input({
+        facilitatorHeaders: {
+          verify: { "x-key": "v" },
+          bazaar: { "x-key": "b" },
+        },
+      }),
+    );
+    expect(config.facilitatorHeaders).toEqual({
+      verify: { "x-key": "v" },
+      bazaar: { "x-key": "b" },
+    });
+  });
+
   it("rejects a zero or negative facilitator timeout", () => {
     for (const value of [0, -5]) {
       expectConfigError(() => resolveConfig(input({ facilitatorTimeoutMs: value })), "facilitatorTimeoutMs");

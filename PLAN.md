@@ -13,29 +13,17 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 | | State |
 | --- | --- |
-| Code | 3 packages + 1 example, 161 tests, clean typecheck |
-| CI | none — no `.github` directory |
-| Published | no, everything is `0.1.0` |
-| Remote | none, repository is local only |
-| Bundle | core 40 KB, express 13 KB, cli 33 KB |
-| Schemes | `exact` only |
+| Code | 3 packages + 1 example; typecheck clean; tests growing past 160 |
+| CI | GitHub Actions (Node × Express matrix + daily live facilitator) |
+| Published | `@x402-lens/*` `0.2.0` on npm |
+| Remote | `https://github.com/Rozenberg888/x402-lens` |
+| Schemes | `exact`, `upto` |
 | Frameworks | Express only |
-| Diagnostics | EVM-only |
+| Diagnostics | EVM + shallow Solana; reconcile for `settlement_pending` |
 
-Three findings that drive the ordering below:
-
-1. **A documented diagnostic does not exist.** `eip712_domain_mismatch` is
-   declared in `packages/core/src/events.ts` and promised in `README.md:228`,
-   but has zero occurrences in the rules engine. That is a false promise, not a
-   missing feature.
-2. **Solana diagnostics are effectively absent.** All four payload-reading rules
-   go through `asEvmExactPayload`, so for a Solana payment `checkPayTo` and
-   `checkAuthorizationWindow` return `[]` and the amount check degrades to
-   challenge validation only. The package claims `solana:*` support but cannot
-   answer "why did this fail" on Solana — which is the entire product.
-3. **The public facilitator offers more than the package can use.** `/supported`
-   lists `upto` and `batch-settlement` on Base Sepolia; `x402-lens` hardcodes
-   `scheme: "exact"`.
+Stage 1–2 honesty gaps (`eip712_domain_mismatch`, Solana config findings, `upto`)
+are closed. Remaining product pressure is distribution: real users, a second
+framework adapter, and hosted monitoring (see Monetisation).
 
 ---
 
@@ -94,6 +82,10 @@ inspection needs the Solana SDK and is out of scope by design.
       `@x402-lens/core`, `@x402-lens/express`, `@x402-lens/cli` (bin `x402-lens`).
       CLI is scoped under the org; unscoped `x402-lens` was blocked by the
       granular token (org-only).
+- [x] CLI `--json` on `inspect` / `explain` / `doctor` / `reconcile` — machine
+      shape with `exitCode` so CI and agents do not scrape human text.
+- [x] Issue template **Integration report** — structured intake for outside
+      failure modes (package, framework, facilitator, artifacts).
 - [ ] README with copy-paste examples that were actually run.
 - [ ] 10–20 real users. Goal is not revenue, it is learning what hurts.
 

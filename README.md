@@ -357,15 +357,16 @@ When enabled, headers are merged with whatever the response already has.
 ## CLI
 
 ```
-x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000]
-x402-lens explain [--challenge ...] [--payment ...] [--verify ...] [--settle ...]
-x402-lens doctor [--facilitator <url>] [--network <caip2>]
-x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>]
+x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000] [--json]
+x402-lens explain [--challenge ...] [--payment ...] [--verify ...] [--settle ...] [--json]
+x402-lens doctor [--facilitator <url>] [--network <caip2>] [--json]
+x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>] [--json]
 x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
 ```
 
 All of `--challenge`, `--payment`, `--verify`, `--settle` accept raw base64
-header values, decoded JSON, or `@file`. `doctor` exits non-zero when the
+header values, decoded JSON, or `@file`. `--json` prints a stable machine shape
+(always includes `exitCode`) for CI and agents. `doctor` exits non-zero when the
 facilitator does not list the configured network for `x402Version: 2`, so it can
 gate a deploy. `reconcile` asks a public RPC whether a settlement hash confirmed
 — use it after `settlement_pending`, never retry first. `add` prints a diff and

@@ -15,19 +15,19 @@ import { InputError } from "./input.js";
 const USAGE = `x402-lens — explain and verify x402 v2 payments
 
 Usage:
-  x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000]
+  x402-lens inspect <url> [--method GET] [--header "K: V"] [--timeout 15000] [--json]
       Fetch an endpoint unpaid, decode PAYMENT-REQUIRED, and report schema
       conformance and CORS readiness for browser buyers.
 
   x402-lens explain [--challenge <b64|json|@file>] [--payment <...>]
-                    [--verify <...>] [--settle <...>]
+                    [--verify <...>] [--settle <...>] [--json]
       Diagnose a failed exchange: what is wrong, and what to change.
 
-  x402-lens doctor [--facilitator <url>] [--network <caip2>] [--networks <a,b>]
+  x402-lens doctor [--facilitator <url>] [--network <caip2>] [--networks <a,b>] [--json]
       Verify that configuration can actually accept payments, including that
       the facilitator supports every configured network with x402Version 2.
 
-  x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>]
+  x402-lens reconcile --tx <hash> [--network <caip2>] [--rpc <url>] [--json]
       Check whether a settlement transaction confirmed on chain. Use this
       after settlement_pending — never retry a payment until you know.
 
@@ -36,6 +36,7 @@ Usage:
       --write is passed.
 
 Options:
+  --json        Machine-readable JSON on stdout (inspect / explain / doctor / reconcile)
   --help, -h    Show this help.
 
 Exit codes:
@@ -52,6 +53,7 @@ Exit codes:
  */
 export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
+  const asJson = flagEnabled(args, "json");
 
   if (flagEnabled(args, "help") || flagEnabled(args, "h") || args.command === undefined) {
     process.stdout.write(USAGE);
@@ -78,7 +80,25 @@ export async function main(argv: string[]): Promise<number> {
             ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
             : {}),
         });
-        process.stdout.write(`${result.findings}\n`);
+        if (asJson) {
+          process.stdout.write(
+            `${JSON.stringify(
+              {
+                status: result.status,
+                headerPresent: result.headerPresent,
+                decodedFromBody: result.decodedFromBody,
+                paymentRequired: result.paymentRequired ?? null,
+                conformance: result.conformance,
+                cors: result.cors,
+                exitCode: result.exitCode,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+        } else {
+          process.stdout.write(`${result.findings}\n`);
+        }
         return result.exitCode;
       }
 
@@ -89,7 +109,21 @@ export async function main(argv: string[]): Promise<number> {
           ...(flagValue(args, "verify") ? { verify: flagValue(args, "verify") as string } : {}),
           ...(flagValue(args, "settle") ? { settle: flagValue(args, "settle") as string } : {}),
         });
-        process.stdout.write(`${result.text}\n`);
+        if (asJson) {
+          process.stdout.write(
+            `${JSON.stringify(
+              {
+                findings: result.findings,
+                findingCount: result.findingCount,
+                exitCode: result.exitCode,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+        } else {
+          process.stdout.write(`${result.text}\n`);
+        }
         return result.exitCode;
       }
 
@@ -109,7 +143,20 @@ export async function main(argv: string[]): Promise<number> {
               }
             : {}),
         });
-        process.stdout.write(`${result.text}\n`);
+        if (asJson) {
+          process.stdout.write(
+            `${JSON.stringify(
+              {
+                checks: result.checks,
+                exitCode: result.exitCode,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+        } else {
+          process.stdout.write(`${result.text}\n`);
+        }
         return result.exitCode;
       }
 
@@ -151,7 +198,25 @@ export async function main(argv: string[]): Promise<number> {
             ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
             : {}),
         });
-        process.stdout.write(`${result.text}\n`);
+        if (asJson) {
+          process.stdout.write(
+            `${JSON.stringify(
+              {
+                status: result.status,
+                network: result.network,
+                tx: result.tx,
+                rpcUrl: result.rpcUrl,
+                block: result.block ?? null,
+                detail: result.detail,
+                exitCode: result.exitCode,
+              },
+              null,
+              2,
+            )}\n`,
+          );
+        } else {
+          process.stdout.write(`${result.text}\n`);
+        }
         return result.exitCode;
       }
 

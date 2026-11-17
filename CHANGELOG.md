@@ -5,7 +5,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- CLI `--json` on `inspect`, `explain`, `doctor`, and `reconcile` — structured
+  stdout with a stable `exitCode` field for CI and agent consumers.
+- GitHub issue template **Integration report** for outside failure modes.
 
 ## [0.2.0] — 2026-11-17
 

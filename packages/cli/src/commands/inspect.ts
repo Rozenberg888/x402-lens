@@ -47,7 +47,7 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
     method,
     headers: {
       Accept: "application/json",
-      "User-Agent": "x402-lens/0.1",
+      "User-Agent": "x402-lens/0.2",
       ...options.headers,
     },
     signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),

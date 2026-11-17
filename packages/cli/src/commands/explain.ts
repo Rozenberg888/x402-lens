@@ -9,6 +9,7 @@
 import {
   diagnose,
   formatFindings,
+  type Finding,
   type WirePaymentPayload,
   type WirePaymentRequired,
   type WireSettleResponse,
@@ -27,6 +28,8 @@ export interface ExplainResult {
   text: string;
   exitCode: number;
   findingCount: number;
+  /** Structured findings for `--json` consumers. */
+  findings: Finding[];
 }
 
 /**
@@ -62,6 +65,7 @@ export async function explainPayment(input: ExplainInput): Promise<ExplainResult
       ].join("\n"),
       exitCode: 2,
       findingCount: 0,
+      findings: [],
     };
   }
 
@@ -86,5 +90,6 @@ export async function explainPayment(input: ExplainInput): Promise<ExplainResult
     text: `${header}\n\n${formatFindings(findings)}`,
     exitCode: hasError ? 1 : 0,
     findingCount: findings.length,
+    findings,
   };
 }

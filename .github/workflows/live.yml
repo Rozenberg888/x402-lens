@@ -25,6 +25,10 @@ jobs:
 
       - run: npm ci
 
+      # Package exports point at dist/; live vitest also aliases sources, but
+      # build keeps the job honest if an import bypasses the alias.
+      - run: npm run build
+
       - name: Live tests
         run: npm run test:live
         env:

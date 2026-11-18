@@ -18,6 +18,7 @@ async function startPaywall(): Promise<{ url: string; close(): Promise<void> }> 
       "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired as never),
       "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
       "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+      "Access-Control-Allow-Origin": "*",
     });
     response.end(JSON.stringify(paymentRequired));
   });

@@ -30,6 +30,8 @@ import {
   prometheusSink,
   resolveConfig,
   sentryBreadcrumbSink,
+  assertLensConfig,
+  ConfigError,
   settleResponseFromError,
   toRoutesConfig,
   type Finding,
@@ -54,7 +56,7 @@ import {
   type HTTPRequestContext,
   type RoutesConfig,
 } from "@x402/core/server";
-import { paymentMiddlewareFromHTTPServer } from "@x402/express";
+import { ExpressAdapter, paymentMiddlewareFromHTTPServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -210,10 +212,12 @@ export interface GrantContext {
  * @throws {ConfigError} When a required setting is missing or malformed
  */
 export function paymentLens(options: PaymentLensOptions = {}): PaymentLens {
-  const config = options.config ?? resolveConfig({
-    ...options,
-    routes: normaliseRouteInput(options.routes),
-  });
+  const config = options.config
+    ? (assertLensConfig(options.config), options.config)
+    : resolveConfig({
+        ...options,
+        routes: normaliseRouteInput(options.routes),
+      });
   return buildLens(config, options);
 }
 
@@ -227,10 +231,12 @@ export function paymentLens(options: PaymentLensOptions = {}): PaymentLens {
 export async function paymentLensAsync(
   options: PaymentLensOptions = {},
 ): Promise<PaymentLens> {
-  const config = options.config ?? await loadConfig({
-    ...options,
-    routes: normaliseRouteInput(options.routes),
-  });
+  const config = options.config
+    ? (assertLensConfig(options.config), options.config)
+    : await loadConfig({
+        ...options,
+        routes: normaliseRouteInput(options.routes),
+      });
   return buildLens(config, options);
 }
 
@@ -239,9 +245,24 @@ function normaliseRouteInput(routes: PaymentLensOptions["routes"]): RouteInput[]
   if (Array.isArray(routes)) return routes;
   // A bare string is the common case; an object allows per-route options such as
   // `paymentFlow` without dropping to the array form.
-  return Object.entries(routes).map(([route, value]) =>
-    typeof value === "string" ? { route, price: value } : { route, ...value },
-  );
+  return Object.entries(routes).map(([route, value]) => {
+    if (typeof value === "string") return { route, price: value };
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return { route, ...value };
+    }
+    throw new ConfigError(
+      "routes",
+      `routes["${route}"] must be a price string or an options object, got ${JSON.stringify(value)}.`,
+    );
+  });
+}
+
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
 }
 
 function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens {
@@ -308,57 +329,16 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
     false,
   );
   const corsHeaders = buildCorsHeaders(options.cors);
-
-  if (options.grant) {
-    const grant = options.grant;
-    httpServer.onProtectedRequest(async (context, routeConfig) => {
-      const method = safeCall(() => context.adapter.getMethod()) ?? "GET";
-      const path = safeCall(() => context.adapter.getPath()) ?? context.path ?? "/";
-      const decision = await grant({
-        method,
-        path,
-        route: `${method} ${path}`,
-        header: (name: string) => safeCall(() => context.adapter.getHeader(name)),
-        query: safeCall(() => context.adapter.getQueryParams?.() ?? {}) ?? {},
-        config: routeConfig,
-      });
-
-      if (decision === true) {
-        bus.emit(
-          makeEvent<LensEvent>({
-            type: "access.granted",
-            requestId: currentRequestContext()?.requestId ?? randomUUID(),
-            route: `${method} ${path}`,
-            scheme: "exact",
-            network: config.network,
-            amount: "0",
-            asset: "",
-            payTo: config.payTo,
-          } as LensEvent),
-        );
-        return { grantAccess: true };
-      }
-
-      if (typeof decision === "string") {
-        bus.emit(
-          makeEvent<LensEvent>({
-            type: "access.denied",
-            requestId: currentRequestContext()?.requestId ?? randomUUID(),
-            route: `${method} ${path}`,
-            scheme: "exact",
-            network: config.network,
-            amount: "0",
-            asset: "",
-            payTo: config.payTo,
-            reason: decision,
-          } as LensEvent),
-        );
-        return { abort: true, reason: decision };
-      }
-
-      return undefined;
-    });
+  if (options.cors === true) {
+    // #region agent note — surface at build time without throwing
+    process.emitWarning(
+      "[x402-lens] cors: true does not set Access-Control-Allow-Origin. Pass cors: { origin: \"…\" } for browser buyers.",
+      "X402LensCors",
+    );
+    // #endregion
   }
+
+  const grant = options.grant;
 
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
     const context = {
@@ -392,9 +372,93 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
     observePaymentRequired(res, emitRequired, { mirrorBody: readableBody });
 
-    // Await facilitator readiness before the SDK middleware runs. Otherwise a
-    // dead facilitator becomes an opaque HTTP 500 with an empty event stream.
     void (async () => {
+      const adapter = new ExpressAdapter(req);
+      const httpContext = {
+        adapter,
+        path: req.path,
+        decodedPath: decodedRoutePath(req.path),
+        method: req.method,
+        paymentHeader:
+          adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
+      };
+
+      // Unprotected routes must not depend on facilitator readiness (health checks).
+      if (!httpServer.requiresPayment(httpContext)) {
+        next();
+        return;
+      }
+
+      // Grant runs before ready so internal bypass still works when the
+      // facilitator is down.
+      if (grant) {
+        try {
+          const decision = await grant({
+            method: context.method,
+            path: context.path,
+            route: `${context.method} ${context.path}`,
+            header: (name: string) => safeCall(() => adapter.getHeader(name)),
+            query: safeCall(() => adapter.getQueryParams?.() ?? {}) ?? {},
+            config: undefined,
+          });
+
+          if (decision === true) {
+            bus.emit(
+              makeEvent<LensEvent>({
+                type: "access.granted",
+                requestId: context.requestId,
+                route: `${context.method} ${context.path}`,
+                scheme: "exact",
+                network: config.network,
+                amount: "0",
+                asset: "",
+                payTo: config.payTo,
+              } as LensEvent),
+            );
+            next();
+            return;
+          }
+
+          if (typeof decision === "string") {
+            bus.emit(
+              makeEvent<LensEvent>({
+                type: "access.denied",
+                requestId: context.requestId,
+                route: `${context.method} ${context.path}`,
+                scheme: "exact",
+                network: config.network,
+                amount: "0",
+                asset: "",
+                payTo: config.payTo,
+                reason: decision,
+              } as LensEvent),
+            );
+            if (!res.headersSent) res.status(403).json({ error: decision });
+            return;
+          }
+        } catch (error) {
+          const reason =
+            error instanceof Error ? error.message.slice(0, 200) : "grant_error";
+          bus.emit(
+            makeEvent<LensEvent>({
+              type: "access.denied",
+              requestId: context.requestId,
+              route: `${context.method} ${context.path}`,
+              scheme: "exact",
+              network: config.network,
+              amount: "0",
+              asset: "",
+              payTo: config.payTo,
+              reason,
+            } as LensEvent),
+          );
+          if (!res.headersSent) {
+            res.status(403).json({ error: "access_denied" });
+          }
+          return;
+        }
+      }
+
       try {
         await ready;
       } catch (error) {
@@ -404,6 +468,8 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
         emitInitFailure(asError);
         if (!res.headersSent) {
           res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+        } else if (!res.writableEnded) {
+          res.end();
         }
         return;
       }
@@ -411,10 +477,24 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       runWithRequestContext(context, () => {
         void Promise.resolve(inner(req, res, next)).catch((error: unknown) => {
           const asError = error instanceof Error ? error : new Error(String(error));
-          initFailure = asError;
-          emitInitFailure(asError);
+          bus.emit(
+            makeEvent<LensEvent>({
+              type: "facilitator.error",
+              ts: new Date().toISOString(),
+              requestId: context.requestId,
+              route: `${context.method} ${context.path}`,
+              scheme: "exact",
+              network: config.network,
+              amount: "0",
+              asset: "",
+              payTo: config.payTo,
+              message: asError.message,
+            } as LensEvent),
+          );
           if (!res.headersSent) {
             res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+          } else if (!res.writableEnded) {
+            res.end();
           }
         });
       });

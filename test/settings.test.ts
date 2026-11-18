@@ -363,13 +363,18 @@ describe("facilitator auth and timeout", () => {
   });
 
   it("prefers explicit headers over the token", () => {
+    const headers = {
+      verify: { "x-api-key": "explicit" },
+      settle: { "x-api-key": "explicit" },
+      supported: { "x-api-key": "explicit" },
+    };
     const config = resolveConfig(
       configInput({
         env: { X402_FACILITATOR_TOKEN: "env-token" },
-        facilitatorHeaders: { verify: { "x-api-key": "explicit" } },
+        facilitatorHeaders: headers,
       }),
     );
-    expect(config.facilitatorHeaders).toEqual({ verify: { "x-api-key": "explicit" } });
+    expect(config.facilitatorHeaders).toEqual(headers);
   });
 
   it("reads a positive facilitator timeout from env", () => {

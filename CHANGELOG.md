@@ -5,6 +5,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-18
+
+### Changed (upgrade note)
+
+- When `facilitatorHeaders` is set, `verify`, `settle`, and `supported` must each
+  be a non-empty header map. Partial objects (e.g. settle-only) are now
+  `ConfigError` at config time.
+
+### Fixed
+
+- Unprotected routes no longer await facilitator readiness; a dead facilitator
+  no longer blocks `/health` (and similar) behind a global 502.
+- `grant` runs before facilitator readiness so internal bypass still works when
+  the facilitator is down.
+- `paymentLens({ config })` re-validates via `assertLensConfig` (headers, CAIP-2,
+  schemes, routes) instead of trusting a pre-built object.
+- Route map values that are neither a string nor an options object throw
+  `ConfigError` instead of a generic `Error`.
+- `x402-lens doctor` probes `/supported` with auth headers from config and
+  checks every `payToByNetwork` entry.
+- `x402-lens inspect` uses `redirect: "manual"` so a 302 cannot hide a 402.
+- `checkCors` flags missing `Access-Control-Allow-Origin` when payment CORS
+  headers are otherwise present.
+- Facilitator `invalidMessage` text in findings is truncated to 200 characters.
+- JSONL sink write failures are reported once on stderr.
+
 ## [0.2.2] — 2026-11-18
 
 ### Changed (upgrade note)

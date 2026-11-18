@@ -78,7 +78,13 @@ export type {
   RoutePrice,
   RoutesInput,
 } from "./config.js";
-export { ConfigError, loadConfig, resolveConfig, toRoutesConfig } from "./config.js";
+export {
+  ConfigError,
+  assertLensConfig,
+  loadConfig,
+  resolveConfig,
+  toRoutesConfig,
+} from "./config.js";
 
 export {
   V1_ALIASES,

@@ -90,7 +90,8 @@ describe("facilitator chaos", () => {
       headers: { "PAYMENT-SIGNATURE": payload(paymentRequired) },
     });
 
-    expect([402, 500, 502]).toContain(response.status);
+    expect(response.status).not.toBe(200);
+    expect([402, 502]).toContain(response.status);
     facilitator.verifyStatus = 200;
     facilitator.verifyResult = { isValid: true, payer: PAYER };
   });
@@ -201,6 +202,80 @@ describe("facilitator chaos", () => {
         localServer.close(error => (error ? reject(error) : resolve())),
       );
       await localFacilitator.close();
+    }
+  });
+
+  it("lets unprotected routes through when the facilitator is unreachable", async () => {
+    const lens = paymentLens({
+      facilitatorUrl: "http://127.0.0.1:24099",
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      facilitatorTimeoutMs: 500,
+      sinks: { console: false },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.get("/health", (_req, res) => res.json({ ok: true }));
+    app.get("/weather", (_req, res) => res.json({ ok: true }));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const health = await fetch(`${localBase}/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ ok: true });
+
+      const paid = await fetch(`${localBase}/weather`);
+      expect(paid.status).toBe(502);
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("honours grant bypass when the facilitator is unreachable", async () => {
+    const events: string[] = [];
+    const lens = paymentLens({
+      facilitatorUrl: "http://127.0.0.1:24099",
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      facilitatorTimeoutMs: 500,
+      grant: request => request.header("x-internal") === "1",
+      sinks: {
+        console: false,
+        onEvent: event => events.push(event.type),
+      },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.get("/weather", (_req, res) => res.json({ ok: true }));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const allowed = await fetch(`${localBase}/weather`, {
+        headers: { "x-internal": "1" },
+      });
+      expect(allowed.status).toBe(200);
+      expect(events).toContain("access.granted");
+
+      const blocked = await fetch(`${localBase}/weather`);
+      expect(blocked.status).toBe(502);
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
     }
   });
 

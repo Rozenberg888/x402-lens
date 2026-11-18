@@ -677,16 +677,52 @@ function assertFacilitatorHeadersShape(headers: FacilitatorHeaders): void {
   const isHeaderObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && !Array.isArray(value);
 
+  if (Object.keys(record).length === 0) {
+    throw new ConfigError(
+      "facilitatorHeaders",
+      "facilitatorHeaders is empty. Omit the field, or provide non-empty verify/settle/supported header maps.",
+    );
+  }
+
   const hasPathKey = FACILITATOR_HEADER_PATHS.some(key => isHeaderObject(record[key]));
   const looksFlat =
     !hasPathKey && Object.values(record).some(value => !isHeaderObject(value));
 
-  if (looksFlat) {
+  if (looksFlat || !hasPathKey) {
     throw new ConfigError(
       "facilitatorHeaders",
-      'facilitatorHeaders must be keyed by facilitator path, e.g. { verify: { Authorization: "…" }, settle: { … } }. A flat headers object is rejected at config time.',
+      'facilitatorHeaders must be keyed by facilitator path, e.g. { verify: { Authorization: "…" }, settle: { … }, supported: { … } }. A flat headers object is rejected at config time.',
     );
   }
+
+  for (const key of ["verify", "settle", "supported"] as const) {
+    const value = record[key];
+    if (!isHeaderObject(value) || Object.keys(value).length === 0) {
+      throw new ConfigError(
+        "facilitatorHeaders",
+        `facilitatorHeaders.${key} must be a non-empty header map when facilitatorHeaders is set.`,
+      );
+    }
+  }
+}
+
+/**
+ * Re-check a pre-built {@link LensConfig} (e.g. `paymentLens({ config })`) so
+ * the money path never skips CAIP-2 / scheme / header validation.
+ */
+export function assertLensConfig(config: LensConfig): void {
+  if (!config.facilitatorUrl?.trim()) {
+    throw new ConfigError("facilitatorUrl", "facilitatorUrl is required.");
+  }
+  if (!config.routes || config.routes.length === 0) {
+    throw new ConfigError(
+      "routes",
+      'No routes configured. Pass routes: { "GET /weather": "$0.001" } or set X402_PRICE__GET_/weather=0.001.',
+    );
+  }
+  for (const network of config.networks) assertCaip2(network);
+  assertSchemesAreValid(config.routes, config.networks);
+  if (config.facilitatorHeaders) assertFacilitatorHeadersShape(config.facilitatorHeaders);
 }
 
 /**
@@ -704,11 +740,22 @@ function normaliseRoutes(raw: RoutesInput | undefined): RoutePrice[] {
     );
   }
 
-  return normaliseRouteArray(
-    Object.entries(raw).map(([route, value]) =>
-      typeof value === "string" ? { route, price: value } : { route, ...value },
-    ),
-  );
+  const entries: RouteInput[] = [];
+  for (const [route, value] of Object.entries(raw)) {
+    if (typeof value === "string") {
+      entries.push({ route, price: value });
+      continue;
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      entries.push({ route, ...(value as Omit<RouteInput, "route">) });
+      continue;
+    }
+    throw new ConfigError(
+      "routes",
+      `routes["${route}"] must be a price string or an options object, got ${JSON.stringify(value)}.`,
+    );
+  }
+  return normaliseRouteArray(entries);
 }
 
 function normaliseRouteArray(raw: RouteInput[]): RoutePrice[] {
@@ -900,6 +947,8 @@ function routesFromEnv(env: Record<string, string | undefined>): RoutePrice[] {
     const method = spec.slice(0, separator).toUpperCase();
     const path = spec.slice(separator + 1);
     if (!path) continue;
+    const index = routes.length;
+    assertPath(path, `${method} ${path}`, index);
     routes.push({ method, path, price: value.trim() });
   }
   return routes;

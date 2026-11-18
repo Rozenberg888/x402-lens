@@ -137,13 +137,21 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   });
 
   if (config) {
-    checks.push(checkPayToShape(config.payTo, network));
+    for (const net of networks.length > 0 ? networks : config.networks) {
+      const address = config.payToByNetwork[net] ?? config.payTo;
+      checks.push(checkPayToShape(address, net));
+    }
   }
 
   let supported: SupportedResponse | undefined;
   try {
+    const authHeaders = config?.facilitatorHeaders?.supported ?? {};
     const response = await fetch(`${facilitatorUrl}/supported`, {
-      headers: { Accept: "application/json", "User-Agent": "x402-lens/0.1" },
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "x402-lens/0.2",
+        ...authHeaders,
+      },
       signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
     });
     if (!response.ok) {

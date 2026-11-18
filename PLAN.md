@@ -15,7 +15,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 | --- | --- |
 | Code | 3 packages + 1 example; typecheck clean; tests growing past 160 |
 | CI | GitHub Actions (Node × Express matrix + daily live facilitator) |
-| Published | `@x402-lens/*` `0.2.0` on npm (workspace `0.2.2` pending publish) |
+| Published | `@x402-lens/*` `0.2.0` on npm (workspace `0.2.3` pending publish) |
 | Remote | `https://github.com/Rozenberg888/x402-lens` |
 | Schemes | `exact`, `upto` |
 | Frameworks | Express only |

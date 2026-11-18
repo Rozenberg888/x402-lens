@@ -85,6 +85,7 @@ describe("inspect", () => {
       headers: {
         "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
         "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+        "Access-Control-Allow-Origin": "*",
       },
     });
 
@@ -96,6 +97,30 @@ describe("inspect", () => {
     expect(result.cors.issues).toEqual([]);
     expect(result.exitCode).toBe(0);
     expect(result.findings).toContain("x402Version: 2");
+  });
+
+  it("does not follow redirects that would hide a 402 paywall", async () => {
+    const paywall = await endpoint({
+      paymentRequired: challenge(),
+      headers: {
+        "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
+        "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+    const redirect = await startEndpoint({
+      status: 302,
+      headers: { Location: paywall },
+      body: { redirected: true },
+    });
+    started.push(redirect);
+
+    const result = await inspectEndpoint({ url: redirect.url });
+
+    expect(result.status).toBe(302);
+    expect(result.paymentRequired).toBeUndefined();
+    expect(result.exitCode).toBe(1);
+    expect(result.findings).toContain("No x402 challenge found");
   });
 
   it("fails when the challenge is not exposed to browsers", async () => {
@@ -129,6 +154,7 @@ describe("inspect", () => {
       headers: {
         "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
         "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+        "Access-Control-Allow-Origin": "*",
       },
     });
 
@@ -146,6 +172,7 @@ describe("inspect", () => {
       headers: {
         "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
         "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+        "Access-Control-Allow-Origin": "*",
       },
     });
 
@@ -282,7 +309,8 @@ describe("doctor", () => {
     expect(result.text).not.toContain("all networks supported");
   });
 
-  it("checks the payTo shape for the configured namespace", async () => {    const result = await runDoctor({
+  it("checks the payTo shape for the configured namespace", async () => {
+    const result = await runDoctor({
       facilitatorUrl: facilitator.url,
       network: NETWORK,
       config: {
@@ -316,6 +344,79 @@ describe("doctor", () => {
     expect(valid.exitCode).toBe(0);
     expect(valid.text).toContain("looks like an EVM address");
     expect(valid.text).toContain("facilitatorHeaders");
+  });
+
+  it("checks every payToByNetwork entry", async () => {
+    const result = await runDoctor({
+      facilitatorUrl: facilitator.url,
+      networks: [NETWORK, "eip155:8453"],
+      config: {
+        facilitatorUrl: facilitator.url,
+        network: NETWORK,
+        networks: [NETWORK, "eip155:8453"],
+        payTo: PAY_TO,
+        payToByNetwork: {
+          [NETWORK]: PAY_TO,
+          "eip155:8453": "not-an-address",
+        },
+        routes: [{ method: "GET", path: "/weather", price: "0.001" }],
+        maxTimeoutSeconds: 60,
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.checks.filter(check => check.name === "payTo address").length).toBe(2);
+    expect(result.text).toContain("not a 0x-prefixed 20-byte address");
+  });
+
+  it("probes /supported with facilitator auth headers from config", async () => {
+    const authed = await startMockFacilitator({
+      network: NETWORK,
+      requireSupportedAuthorization: "Bearer doctor-token",
+    });
+    try {
+      const denied = await runDoctor({
+        facilitatorUrl: authed.url,
+        network: NETWORK,
+        config: {
+          facilitatorUrl: authed.url,
+          network: NETWORK,
+          networks: [NETWORK],
+          payTo: PAY_TO,
+          payToByNetwork: { [NETWORK]: PAY_TO },
+          routes: [{ method: "GET", path: "/weather", price: "0.001" }],
+          maxTimeoutSeconds: 60,
+        },
+      });
+      expect(denied.exitCode).toBe(1);
+      expect(denied.text).toContain("HTTP 401");
+
+      const allowed = await runDoctor({
+        facilitatorUrl: authed.url,
+        network: NETWORK,
+        config: {
+          facilitatorUrl: authed.url,
+          network: NETWORK,
+          networks: [NETWORK],
+          payTo: PAY_TO,
+          payToByNetwork: { [NETWORK]: PAY_TO },
+          routes: [{ method: "GET", path: "/weather", price: "0.001" }],
+          maxTimeoutSeconds: 60,
+          facilitatorHeaders: {
+            verify: { Authorization: "Bearer doctor-token" },
+            settle: { Authorization: "Bearer doctor-token" },
+            supported: { Authorization: "Bearer doctor-token" },
+          },
+        },
+      });
+      expect(allowed.exitCode).toBe(0);
+      const supportedCalls = authed.calls.filter(call => call.path === "supported");
+      expect(supportedCalls.some(call => call.headers.authorization === "Bearer doctor-token")).toBe(
+        true,
+      );
+    } finally {
+      await authed.close();
+    }
   });
 
   const doctorDirs: string[] = [];

@@ -535,8 +535,9 @@ function checkVerifyVerdict({
 }: DiagnosisInput): Finding[] {
   if (!verifyResponse || verifyResponse.isValid) return [];
   const reason = verifyResponse.invalidReason ?? "unknown";
-  const detail = verifyResponse.invalidMessage
-    ? ` Facilitator said: ${verifyResponse.invalidMessage}`
+  const rawMessage = verifyResponse.invalidMessage?.trim();
+  const detail = rawMessage
+    ? ` Facilitator said: ${rawMessage.length > 200 ? `${rawMessage.slice(0, 200)}…` : rawMessage}`
     : "";
 
   switch (reason) {

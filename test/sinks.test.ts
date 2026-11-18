@@ -183,6 +183,28 @@ describe("jsonlFileSink", () => {
     expect(() => sink.write(settledEvent())).not.toThrow();
     await expect(sink.close?.()).resolves.toBeUndefined();
   });
+
+  it("logs a write failure to stderr once", async () => {
+    const dir = await tempDir();
+    const sink = jsonlFileSink(dir);
+    const lines: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      sink.write(settledEvent({ requestId: "one" }));
+      sink.write(settledEvent({ requestId: "two" }));
+      await sink.close?.();
+    } finally {
+      process.stderr.write = original;
+    }
+
+    const warnings = lines.filter(line => line.includes("jsonl sink write failed"));
+    expect(warnings).toHaveLength(1);
+  });
 });
 
 describe("consoleSink", () => {

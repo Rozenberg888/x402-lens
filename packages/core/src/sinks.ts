@@ -48,6 +48,7 @@ export function consoleSink(
 export function jsonlFileSink(path: string): LensSink {
   let chain: Promise<void> = Promise.resolve();
   let directoryReady: Promise<void> | undefined;
+  let writeFailureLogged = false;
 
   const ensureDirectory = (): Promise<void> => {
     directoryReady ??= mkdir(dirname(path), { recursive: true }).then(() => undefined);
@@ -61,7 +62,15 @@ export function jsonlFileSink(path: string): LensSink {
       chain = chain
         .then(ensureDirectory)
         .then(() => appendFile(path, line, "utf8"))
-        .catch(() => undefined);
+        .catch(error => {
+          if (!writeFailureLogged) {
+            writeFailureLogged = true;
+            const message = error instanceof Error ? error.message : String(error);
+            process.stderr.write(
+              `[x402-lens] jsonl sink write failed (${path}): ${message}\n`,
+            );
+          }
+        });
       return chain;
     },
     async close() {

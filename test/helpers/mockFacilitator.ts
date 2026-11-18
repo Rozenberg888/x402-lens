@@ -35,8 +35,8 @@ export interface MockFacilitator {
   verifyDelayMs: number;
   /** Artificial delay before `/settle` responds, milliseconds. */
   settleDelayMs: number;
-  /** Every request body the facilitator received, for assertions. */
-  calls: Array<{ path: string; body: unknown }>;
+  /** Every request the facilitator received, for assertions. */
+  calls: Array<{ path: string; body: unknown; headers: Record<string, string | string[] | undefined> }>;
   close(): Promise<void>;
 }
 
@@ -60,6 +60,8 @@ export interface MockFacilitatorOptions {
   failSupported?: boolean;
   /** Return this status from `/supported` instead of 200. */
   supportedStatus?: number;
+  /** Require this exact Authorization header on `/supported` (401 otherwise). */
+  requireSupportedAuthorization?: string;
 }
 
 /**
@@ -98,7 +100,7 @@ export async function startMockFacilitator(
       const raw = Buffer.concat(chunks).toString("utf8");
       const body = raw ? (JSON.parse(raw) as unknown) : undefined;
       const path = (request.url ?? "/").replace(/^\/+/, "").split("?")[0] ?? "";
-      calls.push({ path, body });
+      calls.push({ path, body, headers: { ...request.headers } });
 
       const send = (status: number, payload: unknown): void => {
         response.writeHead(status, { "content-type": "application/json" });
@@ -115,6 +117,13 @@ export async function startMockFacilitator(
 
       switch (path) {
         case "supported":
+          if (
+            options.requireSupportedAuthorization &&
+            request.headers.authorization !== options.requireSupportedAuthorization
+          ) {
+            send(401, { error: "unauthorized" });
+            return;
+          }
           if (options.failSupported || (options.supportedStatus ?? 200) >= 400) {
             send(options.supportedStatus ?? 500, { error: "facilitator_unavailable" });
             return;

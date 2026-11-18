@@ -535,6 +535,20 @@ describe("facilitator reason codes are mapped to findings", () => {
     expect(findings[0]?.problem).toContain("signature does not recover");
   });
 
+  it("truncates a long facilitator invalidMessage", () => {
+    const long = "x".repeat(250);
+    const findings = diagnose({
+      now: NOW,
+      verifyResponse: {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_signature",
+        invalidMessage: long,
+      },
+    });
+    expect(findings[0]?.problem).toContain(`${"x".repeat(200)}…`);
+    expect(findings[0]?.problem).not.toContain(long);
+  });
+
   it("flags an unknown code as a warning naming the code, never as success", () => {
     // A new facilitator code must not be swallowed: silence here would read as
     // "no problem found", which is the one wrong answer.

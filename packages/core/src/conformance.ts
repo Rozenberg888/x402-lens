@@ -207,6 +207,18 @@ export function checkCors(headers: Record<string, string | undefined>): CorsRepo
     });
   }
 
+  const allowOrigin = headers["access-control-allow-origin"]?.trim();
+  if (
+    (exposesPaymentRequired || exposesPaymentResponse || allowsPaymentSignature) &&
+    !allowOrigin
+  ) {
+    issues.push({
+      field: "Access-Control-Allow-Origin",
+      problem:
+        "Payment CORS headers are present but Access-Control-Allow-Origin is missing. Cross-origin browser buyers still cannot read the challenge; set cors: { origin } in paymentLens or in your CORS middleware.",
+    });
+  }
+
   return {
     exposesPaymentRequired,
     exposesPaymentResponse,

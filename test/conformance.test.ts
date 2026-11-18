@@ -219,6 +219,7 @@ describe("checkCors", () => {
     const report = checkCors({
       "access-control-expose-headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
       "access-control-allow-headers": "content-type, PAYMENT-SIGNATURE",
+      "access-control-allow-origin": "*",
     });
     expect(report.issues).toEqual([]);
     expect(report.exposesPaymentRequired).toBe(true);
@@ -236,6 +237,7 @@ describe("checkCors", () => {
     const report = checkCors({
       "access-control-expose-headers": "payment-required, payment-response",
       "access-control-allow-headers": "payment-signature",
+      "access-control-allow-origin": "*",
     });
     expect(report.issues).toEqual([]);
   });
@@ -244,9 +246,18 @@ describe("checkCors", () => {
     const report = checkCors({
       "access-control-expose-headers": "*",
       "access-control-allow-headers": "*",
+      "access-control-allow-origin": "*",
     });
     // A literal `*` does not cover these names on a credentialed request.
     expect(report.issues).toHaveLength(2);
+  });
+
+  it("flags missing Access-Control-Allow-Origin when payment CORS is otherwise set", () => {
+    const report = checkCors({
+      "access-control-expose-headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
+      "access-control-allow-headers": "PAYMENT-SIGNATURE",
+    });
+    expect(report.issues.some(issue => issue.field === "Access-Control-Allow-Origin")).toBe(true);
   });
 });
 

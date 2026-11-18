@@ -51,7 +51,8 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
       ...options.headers,
     },
     signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
-    redirect: "follow",
+    // Do not follow redirects away from a 402 paywall.
+    redirect: "manual",
   });
 
   const headerValue = response.headers.get("payment-required");

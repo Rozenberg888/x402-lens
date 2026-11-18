@@ -11,7 +11,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ConfigError, resolveConfig, toRoutesConfig } from "@x402-lens/core";
+import {
+  assertLensConfig,
+  ConfigError,
+  resolveConfig,
+  toRoutesConfig,
+  type LensConfig,
+} from "@x402-lens/core";
 
 const EVM = "eip155:84532";
 const EVM_MAINNET = "eip155:8453";
@@ -349,13 +355,18 @@ describe("facilitator auth", () => {
   });
 
   it("prefers explicit headers over the env token", () => {
+    const headers = {
+      verify: { "x-key": "explicit" },
+      settle: { "x-key": "explicit" },
+      supported: { "x-key": "explicit" },
+    };
     const config = resolveConfig(
       input({
         env: { X402_FACILITATOR_TOKEN: "env" },
-        facilitatorHeaders: { settle: { "x-key": "explicit" } },
+        facilitatorHeaders: headers,
       }),
     );
-    expect(config.facilitatorHeaders).toEqual({ settle: { "x-key": "explicit" } });
+    expect(config.facilitatorHeaders).toEqual(headers);
   });
 
   it("rejects a flat facilitatorHeaders object at config time", () => {
@@ -375,14 +386,45 @@ describe("facilitator auth", () => {
       input({
         facilitatorHeaders: {
           verify: { "x-key": "v" },
+          settle: { "x-key": "v" },
+          supported: { "x-key": "v" },
           bazaar: { "x-key": "b" },
         },
       }),
     );
     expect(config.facilitatorHeaders).toEqual({
       verify: { "x-key": "v" },
+      settle: { "x-key": "v" },
+      supported: { "x-key": "v" },
       bazaar: { "x-key": "b" },
     });
+  });
+
+  it("rejects facilitatorHeaders missing settle or supported", () => {
+    expectConfigError(
+      () =>
+        resolveConfig(
+          input({
+            facilitatorHeaders: {
+              verify: { "x-key": "v" },
+              bazaar: { "x-key": "b" },
+            },
+          }),
+        ),
+      "facilitatorHeaders",
+    );
+  });
+
+  it("assertLensConfig rejects flat headers on a pre-built config", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    expectConfigError(
+      () =>
+        assertLensConfig({
+          ...config,
+          facilitatorHeaders: { Authorization: "Bearer flat" } as LensConfig["facilitatorHeaders"],
+        }),
+      "facilitatorHeaders",
+    );
   });
 
   it("rejects a zero or negative facilitator timeout", () => {

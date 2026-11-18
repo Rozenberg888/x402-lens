@@ -427,6 +427,47 @@ describe("facilitator auth", () => {
     );
   });
 
+  it("assertLensConfig rejects a bad payTo on a pre-built config", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    expectConfigError(
+      () =>
+        assertLensConfig({
+          ...config,
+          payTo: "not-an-address",
+          payToByNetwork: { [EVM]: "not-an-address" },
+        }),
+      "payTo",
+    );
+  });
+
+  it("rejects blank facilitator header values", () => {
+    expectConfigError(
+      () =>
+        resolveConfig(
+          input({
+            facilitatorHeaders: {
+              verify: { Authorization: " " },
+              settle: { Authorization: "Bearer ok" },
+              supported: { Authorization: "Bearer ok" },
+            },
+          }),
+        ),
+      "facilitatorHeaders",
+    );
+  });
+
+  it("rejects an unrooted path in the array { method, path } form", () => {
+    expectConfigError(
+      () =>
+        resolveConfig(
+          input({
+            routes: [{ method: "GET", path: "weather", price: "0.001" }],
+          }),
+        ),
+      "routes[0]",
+    );
+  });
+
   it("rejects a zero or negative facilitator timeout", () => {
     for (const value of [0, -5]) {
       expectConfigError(() => resolveConfig(input({ facilitatorTimeoutMs: value })), "facilitatorTimeoutMs");

@@ -120,7 +120,7 @@ describe("inspect", () => {
     expect(result.status).toBe(302);
     expect(result.paymentRequired).toBeUndefined();
     expect(result.exitCode).toBe(1);
-    expect(result.findings).toContain("No x402 challenge found");
+    expect(result.findings).toMatch(/Redirected \(HTTP 302\)/);
   });
 
   it("fails when the challenge is not exposed to browsers", async () => {
@@ -235,6 +235,40 @@ describe("doctor", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.text).toContain("exact scheme: The facilitator supports");
+  });
+
+  it("checks configured route schemes rather than always assuming exact", async () => {
+    const withUpto = await startMockFacilitator({
+      network: NETWORK,
+      schemes: ["upto"],
+    });
+    try {
+      const result = await runDoctor({
+        facilitatorUrl: withUpto.url,
+        network: NETWORK,
+        config: {
+          facilitatorUrl: withUpto.url,
+          network: NETWORK,
+          networks: [NETWORK],
+          payTo: PAY_TO,
+          payToByNetwork: { [NETWORK]: PAY_TO },
+          routes: [
+            {
+              method: "GET",
+              path: "/metered",
+              price: "0.001",
+              scheme: "upto",
+            },
+          ],
+          maxTimeoutSeconds: 60,
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.text).toContain("upto scheme: The facilitator supports");
+      expect(result.text).not.toContain("exact scheme:");
+    } finally {
+      await withUpto.close();
+    }
   });
 
   it("fails when the facilitator does not list the network", async () => {

@@ -205,6 +205,35 @@ describe("facilitator chaos", () => {
     }
   });
 
+  it("lets OPTIONS through without waiting on the facilitator", async () => {
+    const lens = paymentLens({
+      facilitatorUrl: "http://127.0.0.1:24099",
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "* /weather": "$0.001" },
+      facilitatorTimeoutMs: 500,
+      sinks: { console: false },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.options("/weather", (_req, res) => res.sendStatus(204));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const response = await fetch(`${localBase}/weather`, { method: "OPTIONS" });
+      expect(response.status).toBe(204);
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("lets unprotected routes through when the facilitator is unreachable", async () => {
     const lens = paymentLens({
       facilitatorUrl: "http://127.0.0.1:24099",

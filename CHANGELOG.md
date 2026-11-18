@@ -5,6 +5,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-18
+
+### Changed (upgrade note)
+
+- `grant` string denies now always return `{ error: "access_denied" }` to the
+  buyer; the reason string is only on the `access.denied` event.
+- Docs and the weather example use `cors: { origin }` instead of `cors: true`
+  (`cors: true` never set `Access-Control-Allow-Origin`).
+
+### Fixed
+
+- `assertLensConfig` now mirrors `resolveConfig` for URL, payTo, paths, multi-
+  network asset prices, and blank facilitator header values.
+- Array route form `{ method, path, price }` rejects unrooted / missing paths.
+- `grant` receives the matched route as `request.config`.
+- `OPTIONS` never waits on facilitator readiness (browser preflight safe).
+- Middleware async failures are caught at the top level (no hung request /
+  unhandled rejection).
+- Request ALS starts before grant/ready so hooks share `requestId`.
+- `x402-lens doctor` checks schemes from configured routes (not always `exact`).
+- `x402-lens inspect` names 3xx redirects instead of a generic “no challenge”.
+- Settle ambiguity runbook added to `SECURITY.md` (never auto-retry settle).
+
 ## [0.2.3] — 2026-11-18
 
 ### Changed (upgrade note)

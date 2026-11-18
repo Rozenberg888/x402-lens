@@ -1,6 +1,6 @@
 {
   "name": "@x402-lens/core",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Framework-agnostic core for x402-lens: payment events, findings engine, config",
   "license": "MIT",
   "repository": {

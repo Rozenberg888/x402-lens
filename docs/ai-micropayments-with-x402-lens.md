@@ -76,7 +76,7 @@ const lens = paymentLens({
     // AI generation: take money first so you never deliver unpaid compute
     "POST /generate": { price: "$0.05", paymentFlow: "upfront" },
   },
-  cors: true, // browser buyers need exposed payment headers
+  cors: { origin: "*" }, // expose payment headers + Allow-Origin for browsers
 });
 
 lens.on(event => {

@@ -94,12 +94,22 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
   lines.push(`${method} ${options.url} → HTTP ${response.status}`);
   if (!paymentRequired) {
     lines.push("");
-    lines.push(
-      "No x402 challenge found. Expected a PAYMENT-REQUIRED header (base64 PaymentRequired) on a 402 response.",
-    );
-    lines.push(
-      "If this route is unprotected, you will see its normal response instead. If it is protected, check that paymentMiddleware is mounted before the route.",
-    );
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location") ?? "(no Location header)";
+      lines.push(
+        `Redirected (HTTP ${response.status}) to ${location}. inspect does not follow redirects, so a reverse proxy can hide a 402 paywall behind a 3xx.`,
+      );
+      lines.push(
+        "Point inspect at the final paywall URL, or stop the redirect for this path.",
+      );
+    } else {
+      lines.push(
+        "No x402 challenge found. Expected a PAYMENT-REQUIRED header (base64 PaymentRequired) on a 402 response.",
+      );
+      lines.push(
+        "If this route is unprotected, you will see its normal response instead. If it is protected, check that paymentMiddleware is mounted before the route.",
+      );
+    }
   } else {
     lines.push(
       headerPresent

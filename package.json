@@ -1,6 +1,6 @@
 {
   "name": "x402-lens-monorepo",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "x402-lens — observability SDK + debugger for x402 v2 payments",
   "license": "MIT",

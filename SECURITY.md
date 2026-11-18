@@ -32,6 +32,15 @@ committed; `loadConfig` rejects any `facilitatorHeaders` key there. Use
 `X402_FACILITATOR_TOKEN` or pass `facilitatorHeaders` in code / process env
 instead. Routes, network, and `payTo` may stay in the JSON file.
 
+## Settle ambiguity (do not auto-retry)
+
+Trade settlement is at-most-once from the seller's side. After a timeout, a
+connection reset, or an ambiguous settle failure (`settlement_pending`, empty
+body, 5xx with no clear reject), **do not** resend the same settle — that can
+double-charge. Classify the outcome, then confirm on-chain with
+`x402-lens reconcile --tx <hash> --network <caip2>` (or your own RPC check)
+before asking the buyer to pay again.
+
 ## What does not
 
 - A facilitator returning wrong data — that is the facilitator's bug, though a

@@ -23,10 +23,11 @@ const lens = paymentLens({
   routes: { "GET /weather": "$0.001" },
   // A browser buyer cannot read PAYMENT-REQUIRED or send PAYMENT-SIGNATURE
   // without these. Skip this if your app already sets CORS headers.
-  cors: true,
+  cors: { origin: "*" },
 });
 lens.on(event => console.log(event.type, event.route, event.network));
 
+await lens.ready;
 app.use(lens.middleware);
 
 app.get("/weather", (_req, res) => {

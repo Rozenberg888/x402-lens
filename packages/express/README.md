@@ -41,14 +41,28 @@ Configuration comes from `X402_FACILITATOR_URL`, `X402_NETWORK`, and
 
 `paymentLens()` returns `middleware`, the underlying `server` and `httpServer`
 (for custom hooks or schemes on networks this package does not register),
-`config`, `on(listener)`, and `close()`.
+`config`, `ready`, `on(listener)`, and `close()`.
+
+Await `lens.ready` before accepting traffic so a dead facilitator fails the
+deploy instead of the first buyer's request:
+
+```ts
+const lens = paymentLens({ /* … */ });
+await lens.ready;
+app.use(lens.middleware);
+```
 
 ## CORS
 
 Off by default: an app with its own CORS layer should own it. When a browser
 buys from a different origin, none of the three payment headers is
-CORS-safelisted, so payments fail silently. `x402-lens inspect` detects this;
-`cors: true` fixes it, merging with any headers already set.
+CORS-safelisted, so payments fail silently. `x402-lens inspect` detects this.
+
+Use `cors: { origin: "https://app.example.com" }` (or `"*"`) so
+`Access-Control-Allow-Origin` is set together with the payment expose/allow
+headers. `cors: true` only sets the payment expose/allow headers — it does
+**not** set `Access-Control-Allow-Origin`; browser buyers still fail unless
+your own CORS middleware supplies it.
 
 ## Several networks on one route
 
@@ -76,6 +90,7 @@ and exits the process if one is missing. Run `x402-lens doctor` in CI.
 ## Free access
 
 `grant` runs before verification on each protected request. Return `true` for
-access without payment, or a string to deny with a 403 and that reason. Both
-decisions emit events (`access.granted`, `access.denied`), so a bypass is
-visible rather than silent.
+access without payment, or a string to deny with a 403. The buyer always sees
+`{ error: "access_denied" }`; the string is only on the `access.denied` event.
+`request.config` is the matched route (price, scheme, metadata) when known.
+Both decisions emit events, so a bypass is visible rather than silent.

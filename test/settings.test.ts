@@ -691,10 +691,33 @@ describe("access grants", () => {
       unsubscribe();
 
       expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "access_denied" });
       expect(harness.handlerCalls.count).toBe(0);
 
       const denied = events.find(event => event.type === "access.denied");
       expect(denied?.reason).toBe("blocked by policy");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("passes the matched route config into grant", async () => {
+    let seen: unknown;
+    const harness = await startServer(baseConfig(), {
+      grant: request => {
+        seen = request.config;
+        return true;
+      },
+    });
+
+    try {
+      const response = await fetch(`${harness.baseUrl}/weather`);
+      expect(response.status).toBe(200);
+      expect(seen).toMatchObject({
+        method: "GET",
+        path: "/weather",
+        price: "0.001",
+      });
     } finally {
       await harness.close();
     }

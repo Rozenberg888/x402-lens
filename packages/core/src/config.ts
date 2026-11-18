@@ -703,24 +703,63 @@ function assertFacilitatorHeadersShape(headers: FacilitatorHeaders): void {
         `facilitatorHeaders.${key} must be a non-empty header map when facilitatorHeaders is set.`,
       );
     }
+    for (const [headerName, headerValue] of Object.entries(value)) {
+      if (typeof headerValue !== "string" || headerValue.trim().length === 0) {
+        throw new ConfigError(
+          "facilitatorHeaders",
+          `facilitatorHeaders.${key}.${headerName} must be a non-empty string.`,
+        );
+      }
+    }
   }
 }
 
 /**
  * Re-check a pre-built {@link LensConfig} (e.g. `paymentLens({ config })`) so
- * the money path never skips CAIP-2 / scheme / header validation.
+ * the money path never skips the same checks `resolveConfig` enforces.
  */
 export function assertLensConfig(config: LensConfig): void {
   if (!config.facilitatorUrl?.trim()) {
     throw new ConfigError("facilitatorUrl", "facilitatorUrl is required.");
   }
+  assertUrl("facilitatorUrl", config.facilitatorUrl);
+
+  if (!config.networks || config.networks.length === 0) {
+    throw new ConfigError(
+      "network",
+      "network is required. Set X402_NETWORK to a CAIP-2 id such as eip155:84532.",
+    );
+  }
+  for (const network of config.networks) assertCaip2(network);
+
   if (!config.routes || config.routes.length === 0) {
     throw new ConfigError(
       "routes",
       'No routes configured. Pass routes: { "GET /weather": "$0.001" } or set X402_PRICE__GET_/weather=0.001.',
     );
   }
-  for (const network of config.networks) assertCaip2(network);
+  for (const [index, route] of config.routes.entries()) {
+    if (!route.path) {
+      throw new ConfigError(
+        `routes[${index}]`,
+        `routes[${index}].path is required and must start with "/".`,
+      );
+    }
+    assertPath(route.path, `${route.method} ${route.path}`, index);
+  }
+
+  for (const network of config.networks) {
+    const address = config.payToByNetwork?.[network] ?? config.payTo;
+    if (!address?.trim()) {
+      throw new ConfigError(
+        "payTo",
+        `payTo has no address for ${describeNetwork(network)}.`,
+      );
+    }
+    assertAddressFits(address, network, "payTo");
+  }
+
+  assertAssetPricesSurviveMultipleNetworks(config.routes, config.networks);
   assertSchemesAreValid(config.routes, config.networks);
   if (config.facilitatorHeaders) assertFacilitatorHeadersShape(config.facilitatorHeaders);
 }
@@ -776,8 +815,16 @@ function normaliseRouteArray(raw: RouteInput[]): RoutePrice[] {
       };
     }
     const direct = entry as RoutePrice;
+    const method = (direct.method ?? "GET").toUpperCase();
+    if (typeof direct.path !== "string" || direct.path.trim().length === 0) {
+      throw new ConfigError(
+        `routes[${index}]`,
+        `routes[${index}].path is required and must start with "/".`,
+      );
+    }
+    assertPath(direct.path, `${method} ${direct.path}`, index);
     return {
-      method: (direct.method ?? "GET").toUpperCase(),
+      method,
       path: direct.path,
       ...normalisePrice(direct.price, `routes[${index}]`),
       ...metadata(direct),

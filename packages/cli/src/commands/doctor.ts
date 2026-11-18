@@ -228,14 +228,24 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
     );
   }
 
-  const exactSupported = matching.some(kind => kind.scheme === "exact");
-  checks.push({
-    name: "exact scheme",
-    ok: exactSupported,
-    detail: exactSupported
-      ? "The facilitator supports the exact scheme on this network."
-      : `Routes use the exact scheme, which is not listed for ${network}.`,
-  });
+  const requiredSchemes = Array.from(
+    new Set(
+      (config?.routes ?? []).map(route => route.scheme ?? "exact"),
+    ),
+  );
+  // No loaded routes: keep the historical exact check so a facilitator-only
+  // probe still answers the common default.
+  const schemesToCheck = requiredSchemes.length > 0 ? requiredSchemes : ["exact"];
+  for (const scheme of schemesToCheck) {
+    const schemeOk = matching.some(kind => kind.scheme === scheme);
+    checks.push({
+      name: `${scheme} scheme`,
+      ok: schemeOk,
+      detail: schemeOk
+        ? `The facilitator supports the ${scheme} scheme on this network.`
+        : `Configured routes use the ${scheme} scheme, which is not listed for ${network}.`,
+    });
+  }
 
   if (WELL_KNOWN_NETWORKS[network as keyof typeof WELL_KNOWN_NETWORKS]) {
     checks.push({

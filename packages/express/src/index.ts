@@ -62,6 +62,16 @@ import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { currentRequestContext, runWithRequestContext } from "./context.js";
 import { observePaymentRequired } from "./observe.js";
 
+/**
+ * Buyer-facing body when the facilitator cannot be reached at init (or the
+ * inner middleware rejects for the same reason). Full SDK detail stays on the
+ * `facilitator.error` event — never in this JSON.
+ */
+const FACILITATOR_UNAVAILABLE_BODY = {
+  error: "facilitator_unavailable",
+  code: "FACILITATOR_UNAVAILABLE",
+} as const;
+
 /** Where the lens should send events. */
 export interface LensSinkOptions {
   /** Print a compact line per event. Defaults to `true`. */
@@ -155,6 +165,14 @@ export interface PaymentLens {
   httpServer: x402HTTPResourceServer;
   /** Resolved and validated configuration. */
   config: LensConfig;
+  /**
+   * Settles when the facilitator `/supported` probe succeeds.
+   *
+   * Rejects when the facilitator cannot be reached or advertises no usable
+   * kinds. Await this before accepting traffic so a dead facilitator fails
+   * the deploy instead of the first buyer's request.
+   */
+  ready: Promise<void>;
   /** Subscribe to events programmatically. */
   on(listener: (event: LensEvent) => void): () => void;
   /** Flush sinks and stop emitting. */
@@ -244,7 +262,51 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
   attachHooks(server, bus, config);
 
   const httpServer = new x402HTTPResourceServer(server, routes);
-  const inner = paymentMiddlewareFromHTTPServer(httpServer);
+  let initFailure: Error | undefined;
+  let initFailureEmitted = false;
+
+  const emitInitFailure = (error: Error): void => {
+    if (initFailureEmitted) return;
+    initFailureEmitted = true;
+    bus.emit(
+      makeEvent<LensEvent>({
+        type: "facilitator.error",
+        ts: new Date().toISOString(),
+        requestId: randomUUID(),
+        route: "INIT /supported",
+        scheme: "exact",
+        network: config.network,
+        amount: "0",
+        asset: "",
+        payTo: config.payTo,
+        message: error.message,
+      } as LensEvent),
+    );
+  };
+
+  // Own the facilitator probe so a failure is observable (`ready` + events)
+  // instead of an opaque HTTP 500 from the SDK's lazy init path.
+  const ready = httpServer.initialize().then(
+    () => undefined,
+    error => {
+      const asError = error instanceof Error ? error : new Error(String(error));
+      initFailure = asError;
+      emitInitFailure(asError);
+      throw asError;
+    },
+  );
+  // Keep `ready` rejectable for awaiters, but do not crash the process when
+  // nobody has attached yet (apps may mount middleware before awaiting ready).
+  void ready.catch(() => {});
+
+  // Disable the SDK's parallel syncFacilitatorOnStart probe — `ready` above is
+  // the single source of truth for initialization.
+  const inner = paymentMiddlewareFromHTTPServer(
+    httpServer,
+    undefined,
+    undefined,
+    false,
+  );
   const corsHeaders = buildCorsHeaders(options.cors);
 
   if (options.grant) {
@@ -330,7 +392,33 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
     observePaymentRequired(res, emitRequired, { mirrorBody: readableBody });
 
-    runWithRequestContext(context, () => inner(req, res, next));
+    // Await facilitator readiness before the SDK middleware runs. Otherwise a
+    // dead facilitator becomes an opaque HTTP 500 with an empty event stream.
+    void (async () => {
+      try {
+        await ready;
+      } catch (error) {
+        const asError =
+          initFailure ??
+          (error instanceof Error ? error : new Error(String(error)));
+        emitInitFailure(asError);
+        if (!res.headersSent) {
+          res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+        }
+        return;
+      }
+
+      runWithRequestContext(context, () => {
+        void Promise.resolve(inner(req, res, next)).catch((error: unknown) => {
+          const asError = error instanceof Error ? error : new Error(String(error));
+          initFailure = asError;
+          emitInitFailure(asError);
+          if (!res.headersSent) {
+            res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+          }
+        });
+      });
+    })();
   };
 
   return {
@@ -338,6 +426,7 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
     server,
     httpServer,
     config,
+    ready,
     on(listener) {
       const sink = callbackSink(listener);
       bus.add(sink);

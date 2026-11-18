@@ -204,6 +204,51 @@ describe("facilitator chaos", () => {
     }
   });
 
+  it("returns 502 with facilitator.error when the facilitator is unreachable", async () => {
+    const events: Array<{ type: string; message?: string }> = [];
+    const lens = paymentLens({
+      facilitatorUrl: "http://127.0.0.1:24099",
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      facilitatorTimeoutMs: 500,
+      sinks: {
+        console: false,
+        onEvent: event => {
+          events.push(event as { type: string; message?: string });
+        },
+      },
+    });
+
+    const app = express();
+    app.use(lens.middleware);
+    app.get("/weather", (_req, res) => res.json({ ok: true }));
+    const localServer = createServer(app);
+    await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address() as AddressInfo;
+    const localBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      await expect(lens.ready).rejects.toThrow(/no supported payment kinds/i);
+
+      const response = await fetch(`${localBase}/weather`);
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as { error?: string; code?: string };
+      expect(body).toEqual({
+        error: "facilitator_unavailable",
+        code: "FACILITATOR_UNAVAILABLE",
+      });
+      const initError = events.find(event => event.type === "facilitator.error");
+      expect(initError).toBeDefined();
+      expect(initError?.message).toMatch(/no supported payment kinds/i);
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        localServer.close(error => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("emits settlement_pending finding on non-terminal settle failure", async () => {
     const events: Array<{ type: string; findings?: Array<{ code: string }> }> = [];
     const localFacilitator = await startMockFacilitator({ network: NETWORK });

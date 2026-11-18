@@ -27,6 +27,11 @@ app.get("/weather", (_req, res) => res.json({ weather: "sunny", temperature: 70 
 
 That is the whole integration: one import, one constructor, one mount. Set
 `X402_FACILITATOR_URL`, `X402_NETWORK`, and `X402_PAY_TO` and it runs.
+Optionally `await lens.ready` before accepting traffic — if the facilitator is
+down, it rejects and requests get HTTP 502 with a stable
+`{ error: "facilitator_unavailable", code: "FACILITATOR_UNAVAILABLE" }` body
+plus a `facilitator.error` event (full detail in the event, not the body)
+instead of an opaque 500.
 
 ## Why this and not the official middleware alone
 
@@ -120,7 +125,10 @@ means payments landing on the wrong chain, so the package refuses to guess.
 
 A v1 shorthand such as `base-sepolia` is rejected with the CAIP-2 id to use
 instead. `x402.config.json` is also read by `paymentLensAsync`, with explicit
-options taking precedence over environment over file.
+options taking precedence over environment over file. Routes in the file may be
+an array or the same `"GET /weather"` map you pass in code.
+`facilitatorHeaders` must not appear in the JSON file — use
+`X402_FACILITATOR_TOKEN` or pass headers in code (`ConfigError` otherwise).
 
 Supported networks: `eip155:*` via `@x402/evm`, `solana:*` via `@x402/svm`. Any
 other namespace throws with an explanation and leaves you the `server` handle to
@@ -162,10 +170,11 @@ before a deploy.
 
 `X402_FACILITATOR_TOKEN` sends `Authorization: Bearer …` to `/verify`,
 `/settle`, and `/supported`. For per-endpoint credentials, pass
-`facilitatorHeaders: { verify: {...}, settle: {...} }` — that per-path shape is
-required, and a flat headers object is rejected at config time (`ConfigError`)
-rather than on the first payment request. To replace the client entirely (an
-in-process facilitator, a signing proxy), pass `facilitatorClient`.
+`facilitatorHeaders: { verify: {...}, settle: {...} }` in code — that per-path
+shape is required, a flat headers object is rejected at config time
+(`ConfigError`), and the same key in `x402.config.json` is rejected so secrets
+stay out of committed files. To replace the client entirely (an in-process
+facilitator, a signing proxy), pass `facilitatorClient`.
 
 ## Metered pricing with `upto`
 

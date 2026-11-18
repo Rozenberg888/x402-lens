@@ -5,13 +5,40 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+## [0.2.2] — 2026-11-18
 
-- CLI `--json` on `inspect`, `explain`, `doctor`, and `reconcile` — structured
-  stdout with a stable `exitCode` field for CI and agent consumers.
-- GitHub issue template **Integration report** for outside failure modes.
+### Changed (upgrade note)
+
+- `facilitatorHeaders` in `x402.config.json` now throws `ConfigError`. Put
+  facilitator auth in `X402_FACILITATOR_TOKEN` or `paymentLens({ facilitatorHeaders })`
+  instead — the JSON file must not hold secrets.
+
+### Fixed
+
+- `x402.config.json` accepts the map form of `routes`
+  (`{ "GET /weather": "$0.001" }`), matching the object form `paymentLens()`
+  already took. A value that is neither an array nor a map is now a
+  `ConfigError` naming the accepted shapes instead of a raw `raw.map is not a
+  function`.
+- Unreachable facilitator no longer becomes an opaque HTTP 500 with an empty
+  event stream. `paymentLens()` exposes `ready`, emits `facilitator.error`, and
+  answers buyers with HTTP 502 + a stable
+  `{ error: "facilitator_unavailable", code: "FACILITATOR_UNAVAILABLE" }` body
+  (full SDK detail stays on the event only).
+- `x402-lens add` emits route/price as `JSON.stringify` literals so a crafted
+  `--price` cannot break out of the string.
+- `x402-lens doctor` reports a dedicated `facilitatorHeaders` check (flat shape
+  or secrets in `x402.config.json`) and does not skip it when `--facilitator` /
+  `--network` overrides are present.
 
 ## [0.2.1] — 2026-11-17
+
+### Changed (upgrade note)
+
+- A flat `facilitatorHeaders` object now throws `ConfigError` while the app is
+  being configured, so the process exits at startup. Previously the SDK
+  rejected it on the first payment request, which reached the buyer as HTTP 500.
+  If you currently pass flat headers, fix the shape before upgrading.
 
 ### Fixed
 

@@ -7,6 +7,7 @@
  */
 
 import {
+  ConfigError,
   WELL_KNOWN_NETWORKS,
   describeNetwork,
   isCaip2,
@@ -18,6 +19,8 @@ import {
 export interface DoctorOptions {
   /** Config to check. When absent, it is loaded from env and `x402.config.json`. */
   config?: LensConfig;
+  /** Directory used to resolve `x402.config.json`. Defaults to `process.cwd()`. */
+  cwd?: string;
   /** Override the facilitator to probe. */
   facilitatorUrl?: string;
   /** Override the network to verify against `/supported`. */
@@ -58,7 +61,12 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   let config: LensConfig | undefined;
   let configError: Error | undefined;
   try {
-    config = options.config ?? (await loadConfig({ readConfigFile: true }));
+    config =
+      options.config ??
+      (await loadConfig({
+        readConfigFile: true,
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      }));
     checks.push({
       name: "config",
       ok: true,
@@ -68,8 +76,19 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
           : describeNetwork(config.network)
       }, ${config.routes.length} route(s)`,
     });
+    checks.push(checkFacilitatorHeadersOk(config));
   } catch (error) {
     configError = error as Error;
+    if (isFacilitatorHeadersConfigError(configError)) {
+      checks.push({
+        name: "facilitatorHeaders",
+        ok: false,
+        detail: configError.message,
+      });
+      // Do not continue with facilitator overrides: a bad header shape is a
+      // deploy blocker even when --facilitator / --network are supplied.
+      return finish(checks);
+    }
   }
 
   const facilitatorUrl = (
@@ -225,6 +244,31 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   }
 
   return finish(checks);
+}
+
+function isFacilitatorHeadersConfigError(error: Error): error is ConfigError {
+  return error instanceof ConfigError && error.field === "facilitatorHeaders";
+}
+
+/**
+ * Report that auth headers are either absent or already in the per-path shape
+ * `resolveConfig` accepts. Flat objects and file-based secrets never reach here.
+ */
+function checkFacilitatorHeadersOk(config: LensConfig): DoctorCheck {
+  if (!config.facilitatorHeaders) {
+    return {
+      name: "facilitatorHeaders",
+      ok: true,
+      detail:
+        "No facilitatorHeaders set (public facilitator or X402_FACILITATOR_TOKEN unset).",
+    };
+  }
+  return {
+    name: "facilitatorHeaders",
+    ok: true,
+    detail:
+      "facilitatorHeaders use the per-path shape (verify/settle/supported), not a flat object.",
+  };
 }
 
 /** Cheap shape check: EVM addresses are 0x + 40 hex, SVM are base58. */

@@ -5,9 +5,12 @@
  * codes: a false pass here lets a broken paywall reach production.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { encodePaymentRequiredHeader } from "@x402/core/http";
 import type { WirePaymentRequired } from "@x402-lens/core";
 import { inspectEndpoint } from "../packages/cli/src/commands/inspect";
@@ -312,5 +315,62 @@ describe("doctor", () => {
     });
     expect(valid.exitCode).toBe(0);
     expect(valid.text).toContain("looks like an EVM address");
+    expect(valid.text).toContain("facilitatorHeaders");
+  });
+
+  const doctorDirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      doctorDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function doctorConfigDir(body: Record<string, unknown>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "x402-lens-doctor-"));
+    doctorDirs.push(dir);
+    await writeFile(join(dir, "x402.config.json"), `${JSON.stringify(body, null, 2)}\n`, "utf8");
+    return dir;
+  }
+
+  it("fails with a facilitatorHeaders check when the config file has a flat object", async () => {
+    const cwd = await doctorConfigDir({
+      facilitatorUrl: facilitator.url,
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: [{ route: "GET /weather", price: "0.001" }],
+      facilitatorHeaders: { Authorization: "Bearer flat-token" },
+    });
+
+    const result = await runDoctor({
+      cwd,
+      // Overrides must not mask the headers failure.
+      facilitatorUrl: facilitator.url,
+      network: NETWORK,
+    });
+
+    expect(result.exitCode).toBe(1);
+    const headersCheck = result.checks.find(check => check.name === "facilitatorHeaders");
+    expect(headersCheck?.ok).toBe(false);
+    expect(headersCheck?.detail).toMatch(/keyed by facilitator path|must not be set in x402\.config\.json/i);
+  });
+
+  it("fails with a facilitatorHeaders check when secrets are in x402.config.json", async () => {
+    const cwd = await doctorConfigDir({
+      facilitatorUrl: facilitator.url,
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: [{ route: "GET /weather", price: "0.001" }],
+      facilitatorHeaders: {
+        verify: { Authorization: "Bearer secret" },
+        settle: { Authorization: "Bearer secret" },
+        supported: { Authorization: "Bearer secret" },
+      },
+    });
+
+    const result = await runDoctor({ cwd });
+    expect(result.exitCode).toBe(1);
+    const headersCheck = result.checks.find(check => check.name === "facilitatorHeaders");
+    expect(headersCheck?.ok).toBe(false);
+    expect(headersCheck?.detail).toMatch(/must not be set in x402\.config\.json/i);
   });
 });

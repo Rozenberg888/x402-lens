@@ -65,13 +65,12 @@ describe("file-only configuration", () => {
     expect(config.routes).toHaveLength(1);
   });
 
-  it("loads networks, timeout, headers and facilitator timeout from the file", async () => {
+  it("loads networks, timeout and facilitator timeout from the file", async () => {
     const dir = await tempDir(
       fileConfig({
         networks: [EVM],
         maxTimeoutSeconds: 120,
         facilitatorTimeoutMs: 4000,
-        facilitatorHeaders: { verify: { "x-key": "v" } },
       }),
     );
     const config = await loadConfig({ cwd: dir, env: {} });
@@ -79,7 +78,17 @@ describe("file-only configuration", () => {
     expect(config.networks).toEqual([EVM]);
     expect(config.maxTimeoutSeconds).toBe(120);
     expect(config.facilitatorTimeoutMs).toBe(4000);
-    expect(config.facilitatorHeaders).toEqual({ verify: { "x-key": "v" } });
+    expect(config.facilitatorHeaders).toBeUndefined();
+  });
+
+  it("rejects facilitatorHeaders present only in x402.config.json", async () => {
+    const dir = await tempDir(
+      fileConfig({ facilitatorHeaders: { verify: { "x-key": "v" } } }),
+    );
+    await expect(loadConfig({ cwd: dir, env: {} })).rejects.toMatchObject({
+      name: "ConfigError",
+      field: "facilitatorHeaders",
+    });
   });
 
   it("works with no file at all when env supplies everything", async () => {
@@ -160,14 +169,65 @@ describe("precedence: explicit option beats file", () => {
     expect(config.maxTimeoutSeconds).toBe(30);
   });
 
-  it("uses explicit headers over the file", async () => {
+  it("rejects facilitatorHeaders in x402.config.json even when options also set them", async () => {
     const dir = await tempDir(fileConfig({ facilitatorHeaders: { settle: { a: "1" } } }));
-    const config = await loadConfig({
-      cwd: dir,
-      facilitatorHeaders: { verify: { b: "2" } },
-      env: {},
+    await expect(
+      loadConfig({
+        cwd: dir,
+        facilitatorHeaders: { verify: { b: "2" } },
+        env: {},
+      }),
+    ).rejects.toMatchObject({
+      name: "ConfigError",
+      field: "facilitatorHeaders",
+      message: expect.stringMatching(/must not be set in x402\.config\.json/i),
     });
-    expect(config.facilitatorHeaders).toEqual({ verify: { b: "2" } });
+  });
+
+  it("accepts the map form of routes in x402.config.json", async () => {
+    const dir = await tempDir(
+      fileConfig({
+        routes: { "GET /weather": "0.001", "POST /generate": "$0.05" },
+      }),
+    );
+    const config = await loadConfig({ cwd: dir, env: {} });
+
+    expect(config.routes).toHaveLength(2);
+    expect(config.routes.map(route => `${route.method} ${route.path}`)).toEqual([
+      "GET /weather",
+      "POST /generate",
+    ]);
+  });
+
+  it("accepts per-route options in the map form", async () => {
+    const dir = await tempDir(
+      fileConfig({
+        routes: {
+          "GET /generate": { price: "$0.05", paymentFlow: "upfront" },
+        },
+      }),
+    );
+    const config = await loadConfig({ cwd: dir, env: {} });
+
+    expect(config.routes[0]).toMatchObject({
+      method: "GET",
+      path: "/generate",
+      paymentFlow: "upfront",
+    });
+  });
+
+  it("rejects a routes value that is neither an array nor a map", async () => {
+    const dir = await tempDir(fileConfig({ routes: "GET /weather" }));
+    await expect(loadConfig({ cwd: dir, env: {} })).rejects.toThrow(
+      /routes must be an array .* or a map/,
+    );
+  });
+
+  it("rejects a non-object route entry in the array form", async () => {
+    const dir = await tempDir(fileConfig({ routes: ["GET /weather"] }));
+    await expect(loadConfig({ cwd: dir, env: {} })).rejects.toThrow(
+      /routes\[0\] must be an object/,
+    );
   });
 
   it("uses an explicit facilitator timeout over the file", async () => {
@@ -221,10 +281,14 @@ describe("precedence: file beats environment", () => {
     expect(config.facilitatorHeaders?.settle).toEqual({ Authorization: "Bearer tok" });
   });
 
-  it("uses the file headers over the env token", async () => {
+  it("rejects facilitatorHeaders in x402.config.json instead of taking them over the env token", async () => {
     const dir = await tempDir(fileConfig({ facilitatorHeaders: { settle: { a: "1" } } }));
-    const config = await loadConfig({ cwd: dir, env: { X402_FACILITATOR_TOKEN: "tok" } });
-    expect(config.facilitatorHeaders).toEqual({ settle: { a: "1" } });
+    await expect(
+      loadConfig({ cwd: dir, env: { X402_FACILITATOR_TOKEN: "tok" } }),
+    ).rejects.toMatchObject({
+      name: "ConfigError",
+      field: "facilitatorHeaders",
+    });
   });
 });
 

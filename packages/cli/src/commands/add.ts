@@ -48,7 +48,8 @@ const MOUNT_LINE = "app.use(lens.middleware);";
  * @throws {AddError} When the file is not a supported Express setup
  */
 export async function addProtection(options: AddOptions): Promise<AddResult> {
-  const { file, route, price } = options;
+  const { file, route } = options;
+  const price = assertAddPrice(options.price);
 
   if (basename(file).match(/\.(ts|js|mjs|cjs)$/) === null) {
     throw new AddError(
@@ -81,7 +82,7 @@ export async function addProtection(options: AddOptions): Promise<AddResult> {
   const routePattern = findRouteDeclaration(original, parsed);
   if (!routePattern) {
     throw new AddError(
-      `Could not find a route declaration for "${parsed.method} ${parsed.path}" in ${file}. The add command recognises app.get("/path", ...) and router.post("/path", ...) forms written on one line. Add the middleware manually:\n\n  const lens = paymentLens({ routes: { "${parsed.method} ${parsed.path}": "${price}" } });\n  app.use(lens.middleware);\n`,
+      `Could not find a route declaration for ${tsStringLiteral(`${parsed.method} ${parsed.path}`)} in ${file}. The add command recognises app.get("/path", ...) and router.post("/path", ...) forms written on one line. Add the middleware manually:\n\n  const lens = paymentLens({ routes: { ${routeMapEntry(parsed, price)} } });\n  app.use(lens.middleware);\n`,
     );
   }
 
@@ -134,6 +135,33 @@ function parseRoute(route: string): ParsedRoute {
 /** `"GET /weather"`, the key format the lens route map uses. */
 function routeKey(route: ParsedRoute): string {
   return `${route.method} ${route.path}`;
+}
+
+/**
+ * A double-quoted TypeScript/JavaScript string literal, safe for source insert.
+ *
+ * Quotes, backslashes, and newlines are escaped so a crafted `--price` cannot
+ * break out of the literal or inject object keys.
+ */
+function tsStringLiteral(value: string): string {
+  return JSON.stringify(value);
+}
+
+/** One routes-map entry: `"GET /path": "0.001"`. */
+function routeMapEntry(route: ParsedRoute, price: string): string {
+  return `${tsStringLiteral(routeKey(route))}: ${tsStringLiteral(price)}`;
+}
+
+/**
+ * Same rule as config string prices: non-empty after trim. Object asset prices
+ * are not a CLI flag form.
+ */
+function assertAddPrice(price: string): string {
+  const trimmed = price.trim();
+  if (trimmed.length === 0) {
+    throw new AddError('price is empty. Use a decimal such as "0.001".');
+  }
+  return trimmed;
 }
 
 /**
@@ -274,18 +302,18 @@ function withRouteEntry(
 ): string {
   if (/\broutes\s*:\s*\[/.test(source)) {
     throw new AddError(
-      `${file} passes routes as an array, which x402-lens add does not rewrite. Add the entry by hand:\n\n  { route: "${routeKey(route)}", price: "${price}" }\n`,
+      `${file} passes routes as an array, which x402-lens add does not rewrite. Add the entry by hand:\n\n  { route: ${tsStringLiteral(routeKey(route))}, price: ${tsStringLiteral(price)} }\n`,
     );
   }
 
   const routes = findRoutesObject(source);
   if (!routes) {
     throw new AddError(
-      `paymentLens is already called, but its routes map could not be found, so x402-lens add will not guess where to put ${routeKey(route)}. Add it by hand:\n\n  routes: { "${routeKey(route)}": "${price}" }\n`,
+      `paymentLens is already called, but its routes map could not be found, so x402-lens add will not guess where to put ${routeKey(route)}. Add it by hand:\n\n  routes: { ${routeMapEntry(route, price)} }\n`,
     );
   }
 
-  const entry = `"${routeKey(route)}": "${price}"`;
+  const entry = routeMapEntry(route, price);
   const inner = source.slice(routes.open + 1, routes.close);
 
   // Insert after the last entry, keeping the closing brace on its own line when
@@ -371,7 +399,7 @@ function applyEdits(
       .replace(/(?:[ \t]*\r?\n)+$/, "")}\n\n`;
     const body = `${LENS_DECLARATION.replace(
       "paymentLens()",
-      `paymentLens({ routes: { "${route.method} ${route.path}": "${price}" } })`,
+      `paymentLens({ routes: { ${routeMapEntry(route, price)} } })`,
     )}\n${MOUNT_LINE}\n\n`;
     updated = `${before}${body}${updated.slice(routeMatch.routeStart)}`;
   }

@@ -74,7 +74,9 @@ export type {
   PaymentScheme,
   ResolveConfigInput,
   RouteInput,
+  RouteMap,
   RoutePrice,
+  RoutesInput,
 } from "./config.js";
 export { ConfigError, loadConfig, resolveConfig, toRoutesConfig } from "./config.js";
 

@@ -164,6 +164,19 @@ export interface FacilitatorHeaders {
 /** A route in either the short `route: "GET /weather"` form or the full form. */
 export type RouteInput = RoutePrice | (Omit<RoutePrice, "method" | "path"> & { route: string });
 
+/**
+ * Routes as a map of `"METHOD /path"` to a price or per-route options.
+ *
+ * This is the shape everyone writes first — `{ "GET /weather": "$0.001" }` —
+ * and it is what `x402-lens add` rewrites in source. Accepting it in
+ * `x402.config.json` too means a config file and a code call cannot disagree
+ * about which forms exist.
+ */
+export type RouteMap = Record<string, string | Omit<RoutePrice, "method" | "path">>;
+
+/** Routes in either the array form or the map form. */
+export type RoutesInput = RouteInput[] | RouteMap;
+
 /** Partially-specified config, as accepted from code or a config file. */
 export interface LensConfigInput {
   facilitatorUrl?: string;
@@ -172,7 +185,8 @@ export interface LensConfigInput {
   networks?: string[];
   /** Receiving address, shared across networks or keyed by network. */
   payTo?: PayToInput;
-  routes?: RouteInput[];
+  /** Protected routes, as an array or a `"METHOD /path"` map. */
+  routes?: RoutesInput;
   maxTimeoutSeconds?: number;
   facilitatorHeaders?: FacilitatorHeaders;
   facilitatorTimeoutMs?: number;
@@ -384,6 +398,7 @@ function assertAddressFits(address: string, network: string, field: string): voi
  * Resolve configuration, additionally reading `x402.config.json` when present.
  *
  * Precedence for each field: explicit option → environment → config file.
+ * `facilitatorHeaders` is never read from the file (secrets stay in env/code).
  *
  * @param options - Explicit values plus cwd/env used for fallbacks
  * @returns Fully validated configuration
@@ -394,6 +409,15 @@ export async function loadConfig(
 ): Promise<LensConfig> {
   const fileConfig =
     options.readConfigFile === false ? {} : await readConfigFile(options.cwd ?? process.cwd());
+
+  // Secrets must not live in a committed config file. Auth belongs in
+  // X402_FACILITATOR_TOKEN / paymentLens({ facilitatorHeaders }) / env.
+  if (fileConfig.facilitatorHeaders !== undefined) {
+    throw new ConfigError(
+      "facilitatorHeaders",
+      'facilitatorHeaders must not be set in x402.config.json (secrets belong in the environment). Use X402_FACILITATOR_TOKEN or paymentLens({ facilitatorHeaders: { verify: {…}, settle: {…}, supported: {…} } }).',
+    );
+  }
 
   return resolveConfig({
     facilitatorUrl:
@@ -421,9 +445,7 @@ export async function loadConfig(
         : {}),
     ...(options.facilitatorHeaders !== undefined
       ? { facilitatorHeaders: options.facilitatorHeaders }
-      : fileConfig.facilitatorHeaders !== undefined
-        ? { facilitatorHeaders: fileConfig.facilitatorHeaders }
-        : {}),
+      : {}),
     ...(options.facilitatorTimeoutMs !== undefined
       ? { facilitatorTimeoutMs: options.facilitatorTimeoutMs }
       : fileConfig.facilitatorTimeoutMs !== undefined
@@ -667,9 +689,36 @@ function assertFacilitatorHeadersShape(headers: FacilitatorHeaders): void {
   }
 }
 
-function normaliseRoutes(raw: RouteInput[] | undefined): RoutePrice[] {
+/**
+ * Accept both route forms and reject everything else with a message that names
+ * the shape the caller probably meant.
+ */
+function normaliseRoutes(raw: RoutesInput | undefined): RoutePrice[] {
   if (!raw) return [];
+  if (Array.isArray(raw)) return normaliseRouteArray(raw);
+
+  if (typeof raw !== "object") {
+    throw new ConfigError(
+      "routes",
+      'routes must be an array such as [{ route: "GET /weather", price: "$0.001" }] or a map such as { "GET /weather": "$0.001" }.',
+    );
+  }
+
+  return normaliseRouteArray(
+    Object.entries(raw).map(([route, value]) =>
+      typeof value === "string" ? { route, price: value } : { route, ...value },
+    ),
+  );
+}
+
+function normaliseRouteArray(raw: RouteInput[]): RoutePrice[] {
   return raw.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new ConfigError(
+        `routes[${index}]`,
+        `routes[${index}] must be an object such as { "route": "GET /weather", "price": "$0.001" }, got ${JSON.stringify(entry)}.`,
+      );
+    }
     if ("route" in entry && typeof entry.route === "string") {
       const { method, path } = splitRoute(entry.route, index);
       return {
@@ -816,7 +865,7 @@ function assertPath(path: string, route: string, index: number): void {
 }
 
 interface FileConfig extends LensConfigInput {
-  routes?: RouteInput[];
+  routes?: RoutesInput;
 }
 
 async function readConfigFile(cwd: string): Promise<FileConfig> {

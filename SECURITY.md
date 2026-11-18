@@ -25,6 +25,13 @@ Include:
   logs, or the JSONL sink.
 - A sink failure that breaks or stalls the payment path.
 
+## Secrets
+
+Do not put facilitator credentials in `x402.config.json`. That file is often
+committed; `loadConfig` rejects any `facilitatorHeaders` key there. Use
+`X402_FACILITATOR_TOKEN` or pass `facilitatorHeaders` in code / process env
+instead. Routes, network, and `payTo` may stay in the JSON file.
+
 ## What does not
 
 - A facilitator returning wrong data — that is the facilitator's bug, though a

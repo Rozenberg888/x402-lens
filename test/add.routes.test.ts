@@ -172,4 +172,28 @@ app.get("/weather", (_req, res) => res.json({}));
     expect(updated).toContain('"GET /weather/history": "0.002"');
     expect(updated).toContain('"GET /weather": "0.001"');
   });
+
+  it("escapes quotes and backslashes in --price so the source stays valid", async () => {
+    const path = await tempFile(TWO_ROUTES);
+    const price = '0.001"; evil(); //';
+    await addProtection({
+      file: path,
+      route: "GET /weather",
+      price,
+      write: true,
+    });
+
+    const updated = await readFile(path, "utf8");
+    const expectedEntry = `${JSON.stringify("GET /weather")}: ${JSON.stringify(price)}`;
+    expect(updated).toContain(expectedEntry);
+    // An unescaped break-out would look like this; stringify prevents it.
+    expect(updated).not.toContain('"GET /weather": "0.001"; evil');
+  });
+
+  it("rejects an empty price", async () => {
+    const path = await tempFile(TWO_ROUTES);
+    await expect(
+      addProtection({ file: path, route: "GET /weather", price: "   ", write: true }),
+    ).rejects.toThrow(/price is empty/i);
+  });
 });

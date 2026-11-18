@@ -440,6 +440,63 @@ describe("facilitator auth", () => {
     );
   });
 
+  it("assertLensConfig rejects an empty price on a pre-built config", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    expectConfigError(
+      () =>
+        assertLensConfig({
+          ...config,
+          routes: [{ method: "GET", path: "/weather", price: "   " }],
+        }),
+      "routes[0]",
+    );
+  });
+
+  it("assertLensConfig rejects an unknown scheme on a pre-built config", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    expectConfigError(
+      () =>
+        assertLensConfig({
+          ...config,
+          routes: [
+            {
+              method: "GET",
+              path: "/weather",
+              price: "0.001",
+              scheme: "mystery" as LensConfig["routes"][number]["scheme"],
+            },
+          ],
+        }),
+      "routes",
+    );
+  });
+
+  it("assertLensConfig rejects a bad paymentFlow on a pre-built config", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    expectConfigError(
+      () =>
+        assertLensConfig({
+          ...config,
+          routes: [
+            {
+              method: "GET",
+              path: "/weather",
+              price: "0.001",
+              paymentFlow: "typo" as LensConfig["routes"][number]["paymentFlow"],
+            },
+          ],
+        }),
+      "routes",
+    );
+  });
+
+  it("assertLensConfig trims whitespace on hand-built string prices", () => {
+    const config = resolveConfig(input()) as LensConfig;
+    const routes = [{ method: "GET", path: "/weather", price: "  0.001  " }];
+    assertLensConfig({ ...config, routes });
+    expect(routes[0]?.price).toBe("0.001");
+  });
+
   it("rejects blank facilitator header values", () => {
     expectConfigError(
       () =>

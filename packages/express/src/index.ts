@@ -110,7 +110,10 @@ export interface PaymentLensOptions extends Omit<LensConfigInput, "routes"> {
    * config file and `X402_PRICE__*`.
    */
   routes?: RouteMap | RouteInput[];
-  /** Pre-resolved config. Skips loading entirely, including validation. */
+  /**
+   * Pre-resolved config. Skips file/env loading, but still runs
+   * {@link assertLensConfig} (URL, payTo, paths, schemes, headers).
+   */
   config?: LensConfig;
   /** Where events go. Defaults to console. */
   sinks?: LensSinkOptions;
@@ -215,7 +218,7 @@ export interface GrantContext {
  */
 export function paymentLens(options: PaymentLensOptions = {}): PaymentLens {
   const config = options.config
-    ? (assertLensConfig(options.config), options.config)
+    ? (assertLensConfig(options.config), normalisePassedConfig(options.config))
     : resolveConfig({
         ...options,
         routes: normaliseRouteInput(options.routes),
@@ -234,12 +237,20 @@ export async function paymentLensAsync(
   options: PaymentLensOptions = {},
 ): Promise<PaymentLens> {
   const config = options.config
-    ? (assertLensConfig(options.config), options.config)
+    ? (assertLensConfig(options.config), normalisePassedConfig(options.config))
     : await loadConfig({
         ...options,
         routes: normaliseRouteInput(options.routes),
       });
   return buildLens(config, options);
+}
+
+/** Match `resolveConfig` trailing-slash stripping for pre-built configs. */
+function normalisePassedConfig(config: LensConfig): LensConfig {
+  return {
+    ...config,
+    facilitatorUrl: config.facilitatorUrl.replace(/\/+$/, ""),
+  };
 }
 
 function normaliseRouteInput(routes: PaymentLensOptions["routes"]): RouteInput[] | undefined {
@@ -280,6 +291,12 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
   const schemes = schemesInUse(config);
   for (const network of config.networks) registerScheme(server, network, schemes);
 
+  if (options.routesConfig && Object.keys(options.routesConfig).length === 0) {
+    throw new ConfigError(
+      "routesConfig",
+      "routesConfig is empty. Omit it to use config.routes, or pass at least one protected route — an empty map silently disables payment protection.",
+    );
+  }
   const routes = options.routesConfig ?? (toRoutesConfig(config) as unknown as RoutesConfig);
 
   attachHooks(server, bus, config);
@@ -376,6 +393,13 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
     // Browser preflight must never hit the payment path (wildcard routes included).
     if (req.method === "OPTIONS") {
+      // When lens owns CORS, complete preflight here — otherwise Express 404s
+      // and browsers never send PAYMENT-SIGNATURE. When cors is off, the app's
+      // own CORS middleware must answer.
+      if (corsHeaders) {
+        if (!res.headersSent) res.sendStatus(204);
+        return;
+      }
       next();
       return;
     }
@@ -517,12 +541,25 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
         });
       })().catch((error: unknown) => {
         const asError = error instanceof Error ? error : new Error(String(error));
-        respondFacilitatorUnavailable(
-          res,
-          context.requestId,
-          `${context.method} ${context.path}`,
-          asError,
+        bus.emit(
+          makeEvent<LensEvent>({
+            type: "facilitator.error",
+            ts: new Date().toISOString(),
+            requestId: context.requestId,
+            route: `${context.method} ${context.path}`,
+            scheme: "exact",
+            network: config.network,
+            amount: "0",
+            asset: "",
+            payTo: config.payTo,
+            message: `middleware: ${asError.message}`,
+          } as LensEvent),
         );
+        if (!res.headersSent) {
+          res.status(500).json({ error: "internal_error", code: "MIDDLEWARE_ERROR" });
+        } else if (!res.writableEnded) {
+          res.end();
+        }
       });
     });
   };
@@ -548,19 +585,34 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
 /**
  * Find the configured route that covers this method/path for grant callbacks.
- * Exact matches win over method wildcards; parameterized paths need an exact
- * config key to be visible (same limitation as a flat route map).
+ * Exact matches win; then Express-style `:param` / `*` segments; then method `*`.
  */
 function matchRouteConfig(
   config: LensConfig,
   method: string,
   path: string,
 ): RoutePrice | undefined {
-  const exact = config.routes.find(
-    route => route.method === method && route.path === path,
+  const candidates = config.routes.filter(
+    route => route.method === method || route.method === "*",
   );
+  const exact = candidates.find(route => route.path === path);
   if (exact) return exact;
-  return config.routes.find(route => route.method === "*" && route.path === path);
+  return candidates.find(route => pathMatchesPattern(route.path, path));
+}
+
+/** Match `/users/:id` and `/files/*` style patterns against a request path. */
+function pathMatchesPattern(pattern: string, path: string): boolean {
+  if (pattern === path) return true;
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (patternParts.length !== pathParts.length) return false;
+  for (let index = 0; index < patternParts.length; index += 1) {
+    const expected = patternParts[index] ?? "";
+    const actual = pathParts[index] ?? "";
+    if (expected.startsWith(":") || expected === "*") continue;
+    if (expected !== actual) return false;
+  }
+  return true;
 }
 
 /**
@@ -642,11 +694,16 @@ function buildCorsHeaders(
 /**
  * Merge our headers into whatever the response already has, so an app's own
  * CORS layer keeps working.
+ *
+ * List headers (Expose/Allow-Headers/Methods) are unioned. Singleton CORS
+ * headers (`Access-Control-Allow-Origin`, `Vary`) replace — comma-joining ACAO
+ * produces a value browsers reject.
  */
 function applyCorsHeaders(res: Response, headers: Record<string, string>): void {
+  const replaceHeaders = new Set(["access-control-allow-origin", "vary"]);
   for (const [name, value] of Object.entries(headers)) {
     const existing = res.getHeader(name);
-    if (existing === undefined) {
+    if (existing === undefined || replaceHeaders.has(name.toLowerCase())) {
       res.setHeader(name, value);
       continue;
     }

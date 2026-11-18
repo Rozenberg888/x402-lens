@@ -236,14 +236,26 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   // No loaded routes: keep the historical exact check so a facilitator-only
   // probe still answers the common default.
   const schemesToCheck = requiredSchemes.length > 0 ? requiredSchemes : ["exact"];
+  const networksForSchemes = networks.length > 0 ? networks : [network];
   for (const scheme of schemesToCheck) {
-    const schemeOk = matching.some(kind => kind.scheme === scheme);
+    const missingSchemeNetworks = networksForSchemes.filter(
+      candidate =>
+        !kinds.some(
+          kind =>
+            kind.network === candidate &&
+            kind.x402Version === 2 &&
+            kind.scheme === scheme,
+        ),
+    );
+    const schemeOk = missingSchemeNetworks.length === 0;
     checks.push({
       name: `${scheme} scheme`,
       ok: schemeOk,
       detail: schemeOk
-        ? `The facilitator supports the ${scheme} scheme on this network.`
-        : `Configured routes use the ${scheme} scheme, which is not listed for ${network}.`,
+        ? networksForSchemes.length > 1
+          ? `The facilitator supports the ${scheme} scheme on all configured networks.`
+          : `The facilitator supports the ${scheme} scheme on this network.`
+        : `Configured routes use the ${scheme} scheme, which is not listed for: ${missingSchemeNetworks.join(", ")}.`,
     });
   }
 

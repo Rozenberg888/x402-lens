@@ -8,7 +8,7 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "@x402-lens/express": "0.2.1",
+    "@x402-lens/express": "0.2.4",
     "express": "^4.21.2"
   },
   "devDependencies": {

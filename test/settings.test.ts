@@ -723,6 +723,33 @@ describe("access grants", () => {
     }
   });
 
+  it("matches parameterized routes for grant.config", async () => {
+    let seen: unknown;
+    const harness = await startServer(
+      resolveConfig({
+        facilitatorUrl: facilitator.url,
+        network: BASE_SEPOLIA,
+        payTo: PAY_TO,
+        routes: [{ route: "GET /users/:id", price: "0.001" }],
+        env: baseEnv,
+      }),
+      {
+        grant: request => {
+          seen = request.config;
+          return true;
+        },
+      },
+    );
+
+    try {
+      const response = await fetch(`${harness.baseUrl}/users/42`);
+      expect(response.status).toBe(200);
+      expect(seen).toMatchObject({ method: "GET", path: "/users/:id" });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("continues to the normal payment flow when the callback declines", async () => {
     const harness = await startServer(baseConfig(), { grant: () => undefined });
     try {

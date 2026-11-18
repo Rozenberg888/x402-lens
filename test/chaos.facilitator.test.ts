@@ -205,19 +205,19 @@ describe("facilitator chaos", () => {
     }
   });
 
-  it("lets OPTIONS through without waiting on the facilitator", async () => {
+  it("completes OPTIONS preflight with 204 when cors is enabled", async () => {
     const lens = paymentLens({
       facilitatorUrl: "http://127.0.0.1:24099",
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "* /weather": "$0.001" },
       facilitatorTimeoutMs: 500,
+      cors: { origin: "*" },
       sinks: { console: false },
     });
 
     const app = express();
     app.use(lens.middleware);
-    app.options("/weather", (_req, res) => res.sendStatus(204));
     const localServer = createServer(app);
     await new Promise<void>(resolve => localServer.listen(0, "127.0.0.1", resolve));
     const address = localServer.address() as AddressInfo;
@@ -226,6 +226,10 @@ describe("facilitator chaos", () => {
     try {
       const response = await fetch(`${localBase}/weather`, { method: "OPTIONS" });
       expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe("*");
+      expect(response.headers.get("access-control-allow-headers") ?? "").toContain(
+        "PAYMENT-SIGNATURE",
+      );
     } finally {
       await lens.close();
       await new Promise<void>((resolve, reject) =>

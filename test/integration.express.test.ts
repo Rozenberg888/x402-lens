@@ -370,4 +370,39 @@ describe("browser buyers", () => {
       await withCors.close();
     }
   });
+
+  it("replaces Access-Control-Allow-Origin instead of comma-joining", async () => {
+    const handlerCalls = { count: 0 };
+    const lens = paymentLens({
+      facilitatorUrl: facilitator.url,
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      sinks: { console: false },
+      cors: { origin: "https://lens.test" },
+    });
+    const app = express();
+    app.use((_req, res, next) => {
+      res.setHeader("Access-Control-Allow-Origin", "https://app.test");
+      next();
+    });
+    app.use(lens.middleware);
+    app.get("/weather", (_req, res) => {
+      handlerCalls.count += 1;
+      res.json({ ok: true });
+    });
+    const server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/weather`);
+      expect(response.headers.get("access-control-allow-origin")).toBe("https://lens.test");
+      expect(response.headers.get("access-control-allow-origin")).not.toContain(",");
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve())),
+      );
+    }
+  });
 });

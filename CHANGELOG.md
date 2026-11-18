@@ -19,13 +19,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `assertLensConfig` now mirrors `resolveConfig` for URL, payTo, paths, multi-
   network asset prices, and blank facilitator header values.
 - Array route form `{ method, path, price }` rejects unrooted / missing paths.
-- `grant` receives the matched route as `request.config`.
-- `OPTIONS` never waits on facilitator readiness (browser preflight safe).
-- Middleware async failures are caught at the top level (no hung request /
-  unhandled rejection).
+- `grant` receives the matched route as `request.config` (including
+  `/users/:id`-style patterns).
+- `OPTIONS` never waits on facilitator readiness; with `cors` enabled the lens
+  answers preflight with HTTP 204 + CORS headers (browser-safe).
+- Unexpected middleware failures return HTTP 500 `MIDDLEWARE_ERROR` (not a
+  false facilitator 502).
+- Pre-built `config` facilitator URLs strip trailing slashes like `resolveConfig`.
+- `assertLensConfig` rejects empty prices, unknown schemes, and bad
+  `paymentFlow`/`uptoFlow`; trims whitespace on hand-built string prices.
+- Empty `routesConfig: {}` throws `ConfigError` (would silently unprotect).
+- CORS merge replaces `Access-Control-Allow-Origin` (never comma-joins it).
 - Request ALS starts before grant/ready so hooks share `requestId`.
-- `x402-lens doctor` checks schemes from configured routes (not always `exact`).
+- `x402-lens doctor` checks schemes from configured routes on **every**
+  configured network (not only the primary).
 - `x402-lens inspect` names 3xx redirects instead of a generic “no challenge”.
+- Example package is a workspace member on `@x402-lens/express@0.2.4`.
 - Settle ambiguity runbook added to `SECURITY.md` (never auto-retry settle).
 
 ## [0.2.3] — 2026-11-18

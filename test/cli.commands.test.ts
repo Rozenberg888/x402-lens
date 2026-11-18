@@ -271,6 +271,35 @@ describe("doctor", () => {
     }
   });
 
+  it("fails when a secondary network lacks a required scheme", async () => {
+    const dual = await startMockFacilitator({
+      network: NETWORK,
+      networks: [NETWORK, "eip155:8453"],
+      schemes: ["exact"],
+    });
+    try {
+      const result = await runDoctor({
+        facilitatorUrl: dual.url,
+        networks: [NETWORK, "eip155:8453"],
+        config: {
+          facilitatorUrl: dual.url,
+          network: NETWORK,
+          networks: [NETWORK, "eip155:8453"],
+          payTo: PAY_TO,
+          payToByNetwork: { [NETWORK]: PAY_TO, "eip155:8453": PAY_TO },
+          routes: [
+            { method: "GET", path: "/metered", price: "0.001", scheme: "upto" },
+          ],
+          maxTimeoutSeconds: 60,
+        },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.text).toMatch(/upto scheme[\s\S]*not listed/);
+    } finally {
+      await dual.close();
+    }
+  });
+
   it("fails when the facilitator does not list the network", async () => {
     const result = await runDoctor({
       facilitatorUrl: facilitator.url,

@@ -746,6 +746,27 @@ export function assertLensConfig(config: LensConfig): void {
       );
     }
     assertPath(route.path, `${route.method} ${route.path}`, index);
+    // Re-validate price/scheme/flow so a hand-built LensConfig cannot skip the
+    // checks resolveConfig ran through normalisePrice / metadata.
+    const normalised = normalisePrice(route.price, `routes[${index}]`);
+    // Apply trimmed string prices in place so whitespace cannot reach the wire.
+    if (typeof route.price === "string") {
+      (route as { price: string }).price = normalised.price as string;
+    }
+    if (route.scheme !== undefined && route.scheme !== "exact" && route.scheme !== "upto") {
+      throw new ConfigError(
+        "routes",
+        `Route "${route.method} ${route.path}".scheme is ${JSON.stringify(route.scheme)}. Use "exact" or "upto".`,
+      );
+    }
+    // Reuse metadata() validation for paymentFlow / uptoFlow enums.
+    metadata({
+      method: route.method,
+      path: route.path,
+      paymentFlow: route.paymentFlow,
+      uptoFlow: route.uptoFlow,
+      scheme: route.scheme,
+    });
   }
 
   for (const network of config.networks) {

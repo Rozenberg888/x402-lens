@@ -5,6 +5,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Live CI (`test:live`) resolves `@x402-lens/*` via source aliases and builds
+  before running; CI now guards that resolution path so a bare `npm ci` cannot
+  regress the schedule job again.
+
+### Tests
+
+- Broad edge/negative coverage: empty `routesConfig`, `MIDDLEWARE_ERROR`, grant
+  throws, OPTIONS without cors, doctor v1-only / Solana payTo, malformed
+  inspect header, EventBus default/close errors, meta CI guards (416+ tests).
+
 ## [0.2.4] — 2026-11-18
 
 ### Changed (upgrade note)

@@ -63,13 +63,60 @@ describe("EventBus", () => {
     expect(b).toHaveLength(1);
   });
 
+  it("logs to console.error by default when a sink throws", () => {
+    const lines: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args);
+    };
+    try {
+      const broken: LensSink = {
+        name: "broken",
+        write() {
+          throw new Error("exporter is down");
+        },
+      };
+      const bus = new EventBus([broken]);
+      expect(() => bus.emit(settledEvent())).not.toThrow();
+      expect(String(lines[0]?.[0] ?? "")).toContain('sink "broken" failed');
+    } finally {
+      console.error = original;
+    }
+  });
+
+  it("reports a throwing close() without aborting other sinks", async () => {
+    const closed: string[] = [];
+    const errors: unknown[] = [];
+    const broken: LensSink = {
+      name: "broken-close",
+      write() {},
+      close() {
+        throw new Error("flush failed");
+      },
+    };
+    const ok: LensSink = {
+      name: "ok-close",
+      write() {},
+      async close() {
+        closed.push("ok-close");
+      },
+    };
+    const bus = new EventBus([broken, ok], error => errors.push(error));
+    await bus.close();
+    expect(closed).toEqual(["ok-close"]);
+    expect(errors.length).toBe(1);
+    // Further emits are ignored after close.
+    bus.emit(settledEvent());
+    expect(closed).toEqual(["ok-close"]);
+  });
+
   it("keeps going when one sink throws", () => {
     const delivered: LensEvent[] = [];
     const errors: unknown[] = [];
     const broken: LensSink = {
       name: "broken",
       write() {
-        throw new Error("exporter is down");
+        throw new Error("broker is down");
       },
     };
 

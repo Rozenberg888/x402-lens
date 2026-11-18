@@ -33,3 +33,12 @@ jobs:
         run: npm run test:live
         env:
           X402_LIVE_FACILITATOR: ${{ vars.X402_LIVE_FACILITATOR || 'https://x402.org/facilitator' }}
+        # One retry: public facilitator blips should not page on a single flake.
+        # A persistent break still fails the job.
+        continue-on-error: false
+
+      - name: Retry once on failure
+        if: failure()
+        run: npm run test:live
+        env:
+          X402_LIVE_FACILITATOR: ${{ vars.X402_LIVE_FACILITATOR || 'https://x402.org/facilitator' }}

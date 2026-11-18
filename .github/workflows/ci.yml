@@ -45,6 +45,11 @@ jobs:
       - name: Test
         run: npm test
 
+      # Catch the live.yml failure mode early: package exports point at dist/,
+      # and test:live must still resolve @x402-lens/* via aliases without build.
+      - name: Guard live vitest package resolution
+        run: npx vitest run --config vitest.config.ts test/meta.ci-guards.test.ts
+
       - name: Build
         run: npm run build
 

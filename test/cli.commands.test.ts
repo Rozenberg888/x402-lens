@@ -183,6 +183,36 @@ describe("inspect", () => {
     expect(result.findings).toContain("response body (no PAYMENT-REQUIRED header)");
   });
 
+  it("falls back to the body when PAYMENT-REQUIRED is malformed", async () => {
+    const paymentRequired = challenge();
+    const custom = await new Promise<Endpoint>(resolve => {
+      const server = createServer((_req, res) => {
+        res.writeHead(402, {
+          "content-type": "application/json",
+          "PAYMENT-REQUIRED": "%%%-not-base64-%%%",
+          "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
+          "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify(paymentRequired));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address() as AddressInfo;
+        resolve({
+          url: `http://127.0.0.1:${address.port}/weather`,
+          close: () =>
+            new Promise<void>((res, rej) => server.close(error => (error ? rej(error) : res()))),
+        });
+      });
+    });
+    started.push(custom);
+
+    const result = await inspectEndpoint({ url: custom.url });
+    expect(result.headerPresent).toBe(true);
+    expect(result.decodedFromBody).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
+
   it("describes every accept entry so multi-network pricing is visible", async () => {
     const url = await endpoint({
       paymentRequired: challenge({
@@ -208,6 +238,7 @@ describe("inspect", () => {
       headers: {
         "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
         "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
+        "Access-Control-Allow-Origin": "*",
       },
     });
 
@@ -216,6 +247,7 @@ describe("inspect", () => {
     expect(result.findings).toContain("accepts:     2");
     expect(result.findings).toContain("Solana devnet");
     expect(result.findings).toContain("Base Sepolia");
+    expect(result.findings).toContain("Amounts differ by token decimals");
   });
 });
 
@@ -310,6 +342,57 @@ describe("doctor", () => {
     expect(result.text).toContain("does not list eip155:8453");
     // The available networks are listed, so the fix is a copy-paste away.
     expect(result.text).toContain(NETWORK);
+  });
+
+  it("names x402Version 1-only networks explicitly", async () => {
+    const v1 = await startMockFacilitator({
+      network: NETWORK,
+      supportedX402Version: 1,
+    });
+    try {
+      const result = await runDoctor({ facilitatorUrl: v1.url, network: NETWORK });
+      expect(result.exitCode).toBe(1);
+      expect(result.text).toMatch(/x402Version 1 only/i);
+    } finally {
+      await v1.close();
+    }
+  });
+
+  it("checks Solana payTo shape", async () => {
+    const solana = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+    const bad = await runDoctor({
+      facilitatorUrl: facilitator.url,
+      network: solana,
+      config: {
+        facilitatorUrl: facilitator.url,
+        network: solana,
+        networks: [solana],
+        payTo: "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+        payToByNetwork: { [solana]: "0x209693Bc6afc0C5328bA36FaF03C514EF312287C" },
+        routes: [{ method: "GET", path: "/weather", price: "0.001" }],
+        maxTimeoutSeconds: 60,
+      },
+    });
+    expect(bad.exitCode).toBe(1);
+    expect(bad.text).toMatch(/base58/i);
+
+    const good = await runDoctor({
+      facilitatorUrl: facilitator.url,
+      network: solana,
+      config: {
+        facilitatorUrl: facilitator.url,
+        network: solana,
+        networks: [solana],
+        payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        payToByNetwork: {
+          [solana]: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        },
+        routes: [{ method: "GET", path: "/weather", price: "0.001" }],
+        maxTimeoutSeconds: 60,
+      },
+    });
+    // Facilitator may not list Solana — payTo shape check must still pass.
+    expect(good.checks.some(check => check.name === "payTo address" && check.ok)).toBe(true);
   });
 
   it("rejects a v1 shorthand before probing anything", async () => {

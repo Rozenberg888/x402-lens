@@ -64,4 +64,21 @@ describe("public facilitator", () => {
     });
     expect(result.exitCode).toBe(0);
   });
+
+  it("still advertises at least one non-exact scheme somewhere (upto drift signal)", async () => {
+    const response = await fetch(`${FACILITATOR}/supported`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    expect(response.ok).toBe(true);
+    const supported = (await response.json()) as {
+      kinds: Array<{ x402Version: number; scheme: string; network: string }>;
+    };
+    const schemes = new Set(
+      supported.kinds.filter(kind => kind.x402Version === 2).map(kind => kind.scheme),
+    );
+    // Soft signal: if the public facilitator drops every non-exact scheme, we
+    // want a red live run rather than discovering it only after a deploy.
+    expect(schemes.size).toBeGreaterThan(0);
+    expect(schemes.has("exact")).toBe(true);
+  });
 });

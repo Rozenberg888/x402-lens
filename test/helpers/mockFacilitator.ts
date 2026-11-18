@@ -62,6 +62,11 @@ export interface MockFacilitatorOptions {
   supportedStatus?: number;
   /** Require this exact Authorization header on `/supported` (401 otherwise). */
   requireSupportedAuthorization?: string;
+  /**
+   * x402Version advertised in `/supported` kinds. Defaults to `2`.
+   * Use `1` to exercise doctor “v1 only” messaging.
+   */
+  supportedX402Version?: number;
 }
 
 /**
@@ -131,7 +136,7 @@ export async function startMockFacilitator(
           send(200, {
             kinds: (options.networks ?? [network]).flatMap(kindNetwork =>
               (options.schemes ?? ["exact"]).map(scheme => ({
-                x402Version: 2,
+                x402Version: options.supportedX402Version ?? 2,
                 scheme,
                 network: kindNetwork,
               })),

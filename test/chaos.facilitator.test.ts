@@ -13,6 +13,7 @@ import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { WirePaymentRequired } from "@x402-lens/core";
 import { paymentLens } from "@x402-lens/express";
 import { startMockFacilitator, type MockFacilitator } from "./helpers/mockFacilitator";
+import { unreachableUrl } from "./helpers/unreachable";
 
 const NETWORK = "eip155:84532";
 const PAY_TO = "0x209693Bc6afc0C5328bA36FaF03C514EF312287C";
@@ -21,8 +22,17 @@ const PAYER = "0x857b06519E91e3A54538791bDAbd0E22373e36b66";
 let facilitator: MockFacilitator;
 let baseUrl: string;
 let server: Server;
+/**
+ * A facilitator URL that refuses connections.
+ *
+ * Resolved once because it is only meaningful if the port stays closed, and a
+ * hardcoded constant was not: ephemeral ports get reused, and a collision made
+ * these tests fail for a reason unrelated to what they check.
+ */
+let deadFacilitatorUrl: string;
 
 beforeAll(async () => {
+  deadFacilitatorUrl = await unreachableUrl();
   facilitator = await startMockFacilitator({ network: NETWORK });
   const lens = paymentLens({
     facilitatorUrl: facilitator.url,
@@ -142,9 +152,12 @@ describe("facilitator chaos", () => {
     const elapsed = Date.now() - started;
 
     expect(response.status).not.toBe(200);
-    // The client deadline is 1s; two seconds of delay must be cut short, and
-    // five seconds is the ceiling a hung request may ever take.
-    expect(elapsed).toBeLessThan(5_000);
+    // The client deadline is 1s and the server delay is 2s, so the request must
+    // come back before the server would have answered. Asserting against the
+    // delay rather than a fixed ceiling is the difference between "the deadline
+    // fired" and "the request happened to finish" — and it stays meaningful
+    // when the machine is loaded.
+    expect(elapsed).toBeLessThan(2_000);
   });
 
   it("returns 402 when settle fails after verify succeeded", async () => {
@@ -224,7 +237,7 @@ describe("facilitator chaos", () => {
 
   it("completes OPTIONS preflight with 204 when cors is enabled", async () => {
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "* /weather": "$0.001" },
@@ -257,7 +270,7 @@ describe("facilitator chaos", () => {
 
   it("lets unprotected routes through when the facilitator is unreachable", async () => {
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "GET /weather": "$0.001" },
@@ -292,7 +305,7 @@ describe("facilitator chaos", () => {
   it("honours grant bypass when the facilitator is unreachable", async () => {
     const events: string[] = [];
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "GET /weather": "$0.001" },
@@ -332,7 +345,7 @@ describe("facilitator chaos", () => {
   it("returns 502 with facilitator.error when the facilitator is unreachable", async () => {
     const events: Array<{ type: string; message?: string }> = [];
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "GET /weather": "$0.001" },

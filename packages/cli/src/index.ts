@@ -5,6 +5,7 @@
  */
 
 import { AddError, addProtection } from "./commands/add.js";
+import { sendAlert, type AlertChannel } from "./commands/alert.js";
 import { explainPayment } from "./commands/explain.js";
 import { runDoctor } from "./commands/doctor.js";
 import { inspectEndpoint } from "./commands/inspect.js";
@@ -39,11 +40,12 @@ Usage:
       Check whether a settlement transaction confirmed on chain. Use this
       after settlement_pending — never retry a payment until you know.
 
-  x402-lens watch <url...> [--state <file>] [--interval <seconds>] [--once] [--json]
+  x402-lens watch <url...> [--state <file>] [--interval <seconds>] [--once] [--slack <url>] [--json]
       Monitor paywalls from the outside. Checks that a 402 with a readable
       challenge comes back, and alerts when a network, price, payTo or the CORS
       headers change. No SDK integration needed on the monitored server.
       Runs once by default; --interval repeats until interrupted.
+      Alerts go to Slack via --slack or X402_LENS_SLACK_WEBHOOK.
 
   x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
       Add x402 protection to an existing Express route. Prints a diff unless
@@ -186,6 +188,16 @@ export async function main(argv: string[]): Promise<number> {
         const intervalSeconds = intervalFlag ? Number.parseInt(intervalFlag, 10) : undefined;
         const once = !intervalSeconds || intervalSeconds <= 0;
 
+        // Slack webhook from the flag or the environment. It is a credential, so
+        // the environment is the expected source; the flag exists for a one-off
+        // check without exporting anything.
+        const slackWebhookUrl =
+          flagValue(args, "slack") ?? process.env.X402_LENS_SLACK_WEBHOOK;
+        const channel: AlertChannel = {
+          ...(slackWebhookUrl ? { slackWebhookUrl } : {}),
+          ...(flagEnabled(args, "alert-on-success") ? { onSuccess: true } : {}),
+        };
+
         // Previous challenges are the whole point: without them every check is
         // "is there a 402", which an uptime monitor already answers.
         let state: WatchState = { lastChallenges: {} };
@@ -203,10 +215,24 @@ export async function main(argv: string[]): Promise<number> {
 
           const drifted = results.filter(result => result.drift.length > 0);
           const failed = results.filter(result => !result.ok);
+          const needsAttention = results.filter(
+            result => !result.ok || result.drift.length > 0,
+          );
+
+          const alert = await sendAlert(channel, needsAttention, results.length);
 
           if (asJson) {
             process.stdout.write(
-              `${JSON.stringify({ results, drifted: drifted.length, failed: failed.length }, null, 2)}\n`,
+              `${JSON.stringify(
+                {
+                  results,
+                  drifted: drifted.length,
+                  failed: failed.length,
+                  alert: alert.sent ? { sent: true } : { sent: false, reason: alert.reason },
+                },
+                null,
+                2,
+              )}\n`,
             );
           } else {
             for (const result of results) {
@@ -217,6 +243,11 @@ export async function main(argv: string[]): Promise<number> {
               for (const item of result.drift) {
                 process.stdout.write(`     ${item.kind}: ${item.detail}\n`);
               }
+            }
+            // Say so when an alert could not be delivered: a monitor whose
+            // channel is broken looks identical to a healthy one otherwise.
+            if (slackWebhookUrl && !alert.sent && alert.reason !== "nothing to report") {
+              process.stderr.write(`alert not delivered: ${alert.reason}\n`);
             }
           }
 

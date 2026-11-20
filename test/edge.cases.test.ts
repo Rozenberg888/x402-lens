@@ -13,9 +13,23 @@ import express from "express";
 import { ConfigError, assertLensConfig, resolveConfig, type LensConfig } from "@x402-lens/core";
 import { paymentLens } from "@x402-lens/express";
 import { startMockFacilitator, type MockFacilitator } from "./helpers/mockFacilitator";
+import { unreachableUrl } from "./helpers/unreachable";
 
 const NETWORK = "eip155:84532";
 const PAY_TO = "0x209693Bc6afc0C5328bA36FaF03C514EF312287C";
+
+/**
+ * A facilitator URL that refuses connections.
+ *
+ * Resolved once in `beforeAll` because it is only meaningful if the port stays
+ * closed. A hardcoded port was not reliable: ephemeral ports get reused, and a
+ * collision made these tests fail for a reason unrelated to what they check.
+ */
+let deadFacilitatorUrl: string;
+
+beforeAll(async () => {
+  deadFacilitatorUrl = await unreachableUrl();
+});
 
 describe("edge: empty routesConfig", () => {
   it("throws ConfigError instead of silently unprotecting", () => {
@@ -94,7 +108,7 @@ describe("edge: middleware unexpected throw", () => {
 describe("edge: OPTIONS without cors", () => {
   it("calls next() and does not answer 204 itself", async () => {
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "* /weather": "$0.001" },
@@ -274,7 +288,7 @@ describe("edge: repeated dead-facilitator requests", () => {
   it("keeps returning 502 and emits INIT facilitator.error only once", async () => {
     const events: string[] = [];
     const lens = paymentLens({
-      facilitatorUrl: "http://127.0.0.1:24099",
+      facilitatorUrl: deadFacilitatorUrl,
       network: NETWORK,
       payTo: PAY_TO,
       routes: { "GET /weather": "$0.001" },

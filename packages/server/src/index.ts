@@ -441,6 +441,123 @@ export function safeCall<T>(read: () => T): T | undefined {
   }
 }
 
+/**
+ * Longest reason that may reach an event.
+ *
+ * A grant callback returns a human string or throws with a message. Both go
+ * into the event, and both can be arbitrarily long — a thrown database error
+ * with a full query is the realistic case. Truncating here rather than at each
+ * call site is the point: the previous version truncated only the thrown path,
+ * so `grant: () => veryLongString` put the full text in the log.
+ */
+export const MAX_REASON_LENGTH = 200;
+
+/**
+ * Emit `access.granted` / `access.denied`.
+ *
+ * @param bus - Event bus for this lens
+ * @param config - Resolved config, for the default network and payTo
+ * @param context - Request that made the decision
+ * @param type - Which event to emit
+ * @param reason - Why access was denied; truncated to {@link MAX_REASON_LENGTH}
+ */
+export function emitAccess(
+  bus: EventBus,
+  config: LensConfig,
+  context: RequestContext,
+  type: "access.granted" | "access.denied",
+  reason?: string,
+): void {
+  bus.emit(
+    makeEvent<LensEvent>({
+      type,
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: "exact",
+      network: config.network,
+      amount: "0",
+      asset: "",
+      payTo: config.payTo,
+      durationMs: Date.now() - context.startedAt,
+      ...(reason ? { reason: reason.slice(0, MAX_REASON_LENGTH) } : {}),
+    } as LensEvent),
+  );
+}
+
+/**
+ * Emit `facilitator.error` for a failure inside the middleware itself.
+ *
+ * @param bus - Event bus for this lens
+ * @param config - Resolved config
+ * @param context - Request being handled
+ * @param error - The failure; its message goes on the event, never the body
+ */
+export function emitMiddlewareError(
+  bus: EventBus,
+  config: LensConfig,
+  context: RequestContext,
+  error: Error,
+): void {
+  bus.emit(
+    makeEvent<LensEvent>({
+      type: "facilitator.error",
+      ts: new Date().toISOString(),
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: "exact",
+      network: config.network,
+      amount: "0",
+      asset: "",
+      payTo: config.payTo,
+      message: `middleware: ${error.message}`,
+    } as LensEvent),
+  );
+}
+
+/** The challenge shape an observer hands back, as far as events care. */
+export interface ChallengeShape {
+  accepts?: Array<{
+    scheme?: string;
+    network?: string;
+    amount?: string;
+    asset?: string;
+    payTo?: string;
+  }>;
+}
+
+/**
+ * Emit `payment.required` for a challenge that went out.
+ *
+ * @param bus - Event bus for this lens
+ * @param config - Resolved config
+ * @param context - Request that received the challenge
+ * @param paymentRequired - Decoded challenge, for the first offer and findings
+ */
+export function emitRequired(
+  bus: EventBus,
+  config: LensConfig,
+  context: RequestContext,
+  paymentRequired: ChallengeShape,
+): void {
+  const entries = paymentRequired.accepts ?? [];
+  const entry = entries[0];
+  bus.emit(
+    makeEvent<LensEvent>({
+      type: "payment.required",
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: entry?.scheme ?? "exact",
+      network: entry?.network ?? config.network,
+      amount: entry?.amount ?? "0",
+      asset: entry?.asset ?? "",
+      payTo: entry?.payTo ?? config.payTo,
+      offers: entries.length,
+      durationMs: Date.now() - context.startedAt,
+      findings: diagnose({ paymentRequired: paymentRequired as never, now: context.startedAt }),
+    } as LensEvent),
+  );
+}
+
 /** The servers and readiness signal one configuration produces. */
 export interface LensServers {
   bus: EventBus;

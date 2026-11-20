@@ -49,6 +49,9 @@ import {
   MIDDLEWARE_ERROR_BODY,
   buildCorsHeaders,
   buildServers,
+  emitAccess,
+  emitMiddlewareError,
+  emitRequired,
   matchRouteConfig,
   mergeCorsHeaders,
   runWithRequestContext,
@@ -56,8 +59,7 @@ import {
   type LensCommonOptions,
   type LensSinkOptions,
   type RequestContext,
-} from "@x402-lens/server";
-import { observePaymentRequired } from "./observe.js";
+} from "@x402-lens/server";import { observePaymentRequired } from "./observe.js";
 
 export { ACCESS_DENIED_BODY, FACILITATOR_UNAVAILABLE_BODY, MIDDLEWARE_ERROR_BODY };
 export type { LensSinkOptions };
@@ -234,15 +236,29 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
         adapter.getHeader("payment-signature") || adapter.getHeader("x-payment");
 
       // Unprotected routes must not depend on facilitator readiness.
-      if (
-        !httpServer.requiresPayment({
+      //
+      // `requiresPayment` reads the route table and can throw if the adapter
+      // hands it something it cannot parse. That is a lens-side failure, not a
+      // facilitator outage, so it must not escape as Hono's bare-text 500: an
+      // operator needs the same `MIDDLEWARE_ERROR` JSON the Express adapter
+      // sends, and a test asserts it.
+      let required: boolean;
+      try {
+        required = httpServer.requiresPayment({
           adapter,
           path: c.req.path,
           decodedPath: decodedRoutePath(c.req.path),
           method: c.req.method,
           paymentHeader,
-        })
-      ) {
+        });
+      } catch (error) {
+        const asError = error instanceof Error ? error : new Error(String(error));
+        emitMiddlewareError(bus, config, context, asError);
+        c.res = c.json(MIDDLEWARE_ERROR_BODY, 500);
+        return;
+      }
+
+      if (!required) {
         await next();
         return;
       }
@@ -270,7 +286,9 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
             return;
           }
         } catch (error) {
-          const reason = error instanceof Error ? error.message.slice(0, 200) : "grant_error";
+          // Truncation lives in `emitAccess`, so a thrown message and a
+          // returned string are capped identically.
+          const reason = error instanceof Error ? error.message : "grant_error";
           emitAccess(bus, config, context, "access.denied", reason);
           c.res = c.json(ACCESS_DENIED_BODY, 403);
           return;
@@ -296,12 +314,12 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
         c.res = await observePaymentRequired(
           response,
-          paymentRequired => emitRequiredEvent(bus, config, context, paymentRequired),
+          paymentRequired => emitRequired(bus, config, context, paymentRequired),
           { mirrorBody: options.readableBody ?? true },
         );
       } catch (error) {
         const asError = error instanceof Error ? error : new Error(String(error));
-        emitFacilitatorError(bus, config, context, asError);
+        emitMiddlewareError(bus, config, context, asError);
         c.res = c.json(FACILITATOR_UNAVAILABLE_BODY, 502);
       }
     });
@@ -327,87 +345,6 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       return bus.close();
     },
   };
-}
-
-/** The challenge shape the observer hands back. */
-interface ChallengeShape {
-  accepts?: Array<{
-    scheme?: string;
-    network?: string;
-    amount?: string;
-    asset?: string;
-    payTo?: string;
-  }>;
-}
-
-function emitRequiredEvent(
-  bus: EventBus,
-  config: LensConfig,
-  context: RequestContext,
-  paymentRequired: ChallengeShape,
-): void {
-  const entries = paymentRequired.accepts ?? [];
-  const entry = entries[0];
-  bus.emit(
-    makeEvent<LensEvent>({
-      type: "payment.required",
-      requestId: context.requestId,
-      route: `${context.method} ${context.path}`,
-      scheme: entry?.scheme ?? "exact",
-      network: entry?.network ?? config.network,
-      amount: entry?.amount ?? "0",
-      asset: entry?.asset ?? "",
-      payTo: entry?.payTo ?? config.payTo,
-      offers: entries.length,
-      durationMs: Date.now() - context.startedAt,
-      findings: diagnose({ paymentRequired: paymentRequired as never, now: context.startedAt }),
-    } as LensEvent),
-  );
-}
-
-function emitAccess(
-  bus: EventBus,
-  config: LensConfig,
-  context: RequestContext,
-  type: "access.granted" | "access.denied",
-  reason?: string,
-): void {
-  bus.emit(
-    makeEvent<LensEvent>({
-      type,
-      requestId: context.requestId,
-      route: `${context.method} ${context.path}`,
-      scheme: "exact",
-      network: config.network,
-      amount: "0",
-      asset: "",
-      payTo: config.payTo,
-      durationMs: Date.now() - context.startedAt,
-      ...(reason ? { reason } : {}),
-    } as LensEvent),
-  );
-}
-
-function emitFacilitatorError(
-  bus: EventBus,
-  config: LensConfig,
-  context: RequestContext,
-  error: Error,
-): void {
-  bus.emit(
-    makeEvent<LensEvent>({
-      type: "facilitator.error",
-      ts: new Date().toISOString(),
-      requestId: context.requestId,
-      route: `${context.method} ${context.path}`,
-      scheme: "exact",
-      network: config.network,
-      amount: "0",
-      asset: "",
-      payTo: config.payTo,
-      message: `middleware: ${error.message}`,
-    } as LensEvent),
-  );
 }
 
 /**

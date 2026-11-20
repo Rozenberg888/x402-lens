@@ -98,8 +98,13 @@ function requiredFiles(manifest) {
  * user step through a failed payment without cloning the repo — which is the
  * point of the product. What must not ship is raw source trees, tests, and build
  * configuration, which only exist for maintainers.
+ *
+ * `.tsbuildinfo` is here because it leaked once: a failed `tsc` run wrote it
+ * into `dist/`, and because it matched the `files: ["dist"]` entry it went
+ * straight into the tarball at 36 KB — a third of the package — with no test
+ * noticing. Build state belongs to the machine that built it.
  */
-const FORBIDDEN = [/^src\//, /^test\//, /^tsconfig/, /^tsup\.config/];
+const FORBIDDEN = [/^src\//, /^test\//, /^tsconfig/, /^tsup\.config/, /\.tsbuildinfo$/];
 
 const packages = ["core", "server", "express", "hono", "cli"];
 const problems = [];

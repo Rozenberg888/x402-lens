@@ -12,7 +12,7 @@ import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { Hono } from "hono";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { WirePaymentRequired } from "@x402-lens/core";
+import type { LensEvent, WirePaymentRequired } from "@x402-lens/core";
 import { paymentLens, type PaymentLens, type PaymentLensOptions } from "@x402-lens/hono";
 import { startMockFacilitator, type MockFacilitator } from "./helpers/mockFacilitator.js";
 
@@ -208,16 +208,41 @@ describe("hono adapter: paid request", () => {
 });
 
 describe("hono adapter: unprotected routes", () => {
-  it("passes an unpriced route straight through", async () => {
-    const harness = await startServer();
+  it("passes a route the lens does not protect straight through", async () => {
+    const events: LensEvent[] = [];
+    const lens = paymentLens({
+      facilitatorUrl: "http://127.0.0.1:1",
+      network: NETWORK,
+      payTo: PAY_TO,
+      routes: { "GET /weather": "$0.001" },
+      sinks: { console: false },
+    });
+    lens.on(event => events.push(event));
+
     const app = new Hono();
-    // A separate app so the unprotected route is genuinely outside the lens.
+    app.use("*", lens.middleware);
+    // Mounted after the lens but absent from `routes`: the lens must step aside.
     app.get("/health", c => c.json({ ok: true }));
 
-    const response = await fetch(`${harness.baseUrl}/health`);
-    // /health was never mounted on the harness app, so this asserts the lens
-    // does not answer for routes it does not protect.
-    expect([404, 402]).toContain(response.status);
+    const server = createAdaptorServer({ fetch: app.fetch });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+
+      // The point of the test: an unprotected route reaches its handler even
+      // though the facilitator is unreachable. If the lens answered for it,
+      // health checks would fail whenever the facilitator was down.
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(events.filter(event => event.type === "payment.required")).toHaveLength(0);
+    } finally {
+      await lens.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });
 

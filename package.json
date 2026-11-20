@@ -13,7 +13,7 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace @x402-lens/core && npm run build --workspace @x402-lens/server && npm run build --workspace @x402-lens/express && npm run build --workspace @x402-lens/hono && npm run build --workspace @x402-lens/cli",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -30,6 +30,7 @@
     "pages:build": "node scripts/build-pages.mjs"
   },
   "devDependencies": {
+    "@hono/node-server": "^2.1.11",
     "@stryker-mutator/core": "^8.7.1",
     "@stryker-mutator/vitest-runner": "^8.7.1",
     "@types/express": "^4.17.21",

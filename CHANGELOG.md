@@ -5,6 +5,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`@x402-lens/hono`** — `paymentLens()` for Hono 4, the same integration as
+  the Express adapter: one import, one constructor, one `app.use("*", …)`.
+  Hono serves more monthly downloads than Express in the x402 ecosystem, and it
+  is the framework most MCP servers are built on.
+- **`@x402-lens/server`** — the framework-independent half of an adapter:
+  resource-server construction, scheme registration, lifecycle hooks, event
+  shaping, and CORS header merging. Both adapters depend on it, so a change to
+  event shaping reaches every framework at once instead of drifting apart in two
+  copies of the same payment path. Not intended for direct installation.
+
+### Changed
+
+- `npm run build` now builds packages in dependency order (core → server →
+  express → hono → cli). Parallel workspace builds raced: the Hono declaration
+  build ran before `@x402-lens/server` had a `dist`, and failed to resolve its
+  types.
+- `check:dist` and `check:pack` cover all five packages, so a new adapter cannot
+  ship an unusable entry point or an incomplete tarball unnoticed.
+
 ### Fixed
 
 - Live CI (`test:live`) resolves `@x402-lens/*` via source aliases and builds
@@ -13,9 +34,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Tests
 
+- Hono integration suite (11 tests) against the real `@x402/hono` middleware and
+  a real HTTP server: unpaid 402, body mirroring, paid settle, verification
+  failure, grants, and CORS preflight.
 - Broad edge/negative coverage: empty `routesConfig`, `MIDDLEWARE_ERROR`, grant
   throws, OPTIONS without cors, doctor v1-only / Solana payTo, malformed
-  inspect header, EventBus default/close errors, meta CI guards (416+ tests).
+  inspect header, EventBus default/close errors, meta CI guards (427 tests).
 
 ## [0.2.4] — 2026-11-18
 

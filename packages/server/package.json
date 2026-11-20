@@ -1,0 +1,50 @@
+{
+  "name": "@x402-lens/server",
+  "version": "0.2.4",
+  "description": "Shared server-side primitives for x402-lens adapters: lifecycle hooks, scheme registration, event shaping",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rozenberg888/x402-lens.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/Rozenberg888/x402-lens#readme",
+  "bugs": {
+    "url": "https://github.com/Rozenberg888/x402-lens/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
+  },
+  "dependencies": {
+    "@x402-lens/core": "0.2.4",
+    "@x402/core": "^2.31.0",
+    "@x402/evm": "^2.31.0",
+    "@x402/svm": "^2.31.0"
+  },
+  "keywords": [
+    "x402",
+    "payments",
+    "middleware",
+    "observability"
+  ]
+}

@@ -103,7 +103,9 @@ as the specification requires.
 | Package | What it is |
 | --- | --- |
 | `@x402-lens/core` | Events, findings engine, config, sinks. No framework, no SDK. |
+| `@x402-lens/server` | Shared adapter internals: servers, schemes, hooks, CORS. Not installed directly. |
 | `@x402-lens/express` | `paymentLens()` for Express 4 and 5. |
+| `@x402-lens/hono` | `paymentLens()` for Hono 4. |
 | `@x402-lens/cli` (`x402-lens`) | CLI: `inspect`, `explain`, `doctor`, `reconcile`, `add`. |
 
 ## Configuration

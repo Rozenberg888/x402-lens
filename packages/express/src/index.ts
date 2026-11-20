@@ -13,92 +13,58 @@
  *   "why did this fail": route, amount, network, buyer, tx hash, plus findings.
  * - A readable 402 body next to the canonical header, so `curl | jq` works.
  * - Config loading that refuses to guess a facilitator, network, or address.
+ *
+ * The framework-independent half — servers, schemes, hooks, event shaping —
+ * lives in `@x402-lens/server` and is shared with the Hono adapter, so the two
+ * cannot drift apart on a payment path. What is left here is only the part that
+ * is genuinely Express: a mutable `res`, `next()`, and the ALS binding.
  */
 
 import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import {
-  EventBus,
+  ConfigError,
   PrometheusRegistry,
+  assertLensConfig,
   callbackSink,
-  consoleSink,
   diagnose,
-  jsonlFileSink,
   loadConfig,
   makeEvent,
-  openTelemetrySink,
-  prometheusSink,
   resolveConfig,
-  sentryBreadcrumbSink,
-  assertLensConfig,
-  ConfigError,
-  settleResponseFromError,
-  toRoutesConfig,
-  type Finding,
+  type EventBus,
   type LensConfig,
   type LensConfigInput,
   type LensEvent,
   type LensSink,
-  type OtelTracerLike,
-  type PaymentScheme,
   type RouteInput,
   type RoutePrice,
-  type SentryLike,
-  type WirePaymentPayload,
-  type WirePaymentRequired,
-  type WireSettleResponse,
-  type WireVerifyResponse,
 } from "@x402-lens/core";
-import {
-  HTTPFacilitatorClient,
+import type {
+  FacilitatorClient,
+  HTTPRequestContext,
+  RoutesConfig,
   x402HTTPResourceServer,
   x402ResourceServer,
-  type FacilitatorClient,
-  type HTTPRequestContext,
-  type RoutesConfig,
 } from "@x402/core/server";
 import { ExpressAdapter, paymentMiddlewareFromHTTPServer } from "@x402/express";
-import { ExactEvmScheme } from "@x402/evm/exact/server";
-import { UptoEvmScheme } from "@x402/evm/upto/server";
-import { ExactSvmScheme } from "@x402/svm/exact/server";
-import { UptoSvmScheme } from "@x402/svm/upto/server";
-import { currentRequestContext, runWithRequestContext } from "./context.js";
+import {
+  ACCESS_DENIED_BODY,
+  FACILITATOR_UNAVAILABLE_BODY,
+  MIDDLEWARE_ERROR_BODY,
+  buildCorsHeaders,
+  buildServers,
+  matchRouteConfig,
+  mergeCorsHeaders,
+  runWithRequestContext,
+  safeCall,
+  type LensSinkOptions,
+  type RequestContext,
+} from "@x402-lens/server";
 import { observePaymentRequired } from "./observe.js";
 
-/**
- * Buyer-facing body when the facilitator cannot be reached at init (or the
- * inner middleware rejects for the same reason). Full SDK detail stays on the
- * `facilitator.error` event — never in this JSON.
- */
-const FACILITATOR_UNAVAILABLE_BODY = {
-  error: "facilitator_unavailable",
-  code: "FACILITATOR_UNAVAILABLE",
-} as const;
-
-/** Where the lens should send events. */
-export interface LensSinkOptions {
-  /** Print a compact line per event. Defaults to `true`. */
-  console?: boolean;
-  /** Append newline-delimited JSON to this path. */
-  jsonlPath?: string;
-  /** Called for every event. Exceptions are caught and never reach the caller. */
-  onEvent?: (event: LensEvent) => void;
-  /**
-   * Record counters for Prometheus. Pass `true` for the shared registry, or a
-   * `PrometheusRegistry` you will serve from `/metrics` via `prometheusHandler`.
-   */
-  prometheus?: boolean | PrometheusRegistry;
-  /**
-   * OpenTelemetry tracer (`trace.getTracer("x402-lens")`). Opens a short span
-   * per event. `@opentelemetry/api` is not a dependency of this package.
-   */
-  otel?: OtelTracerLike;
-  /**
-   * Sentry-compatible handle (`import * as Sentry from "@sentry/node"`).
-   * Records each event as a breadcrumb. Sentry is not a dependency.
-   */
-  sentry?: SentryLike;
-}
+/** Re-exported so the two adapters expose the same names for the same bodies. */
+export { ACCESS_DENIED_BODY, FACILITATOR_UNAVAILABLE_BODY, MIDDLEWARE_ERROR_BODY };
+export type { LensSinkOptions };
 
 /** Short route form: a bare price, or the full per-route options. */
 export type RouteMap = Record<string, string | Omit<RouteInput, "route">>;
@@ -279,110 +245,35 @@ function decodedRoutePath(path: string): string {
 }
 
 function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens {
-  const bus = new EventBus([
-    ...buildSinks(options.sinks),
-    ...(options.extraSinks ?? []),
-  ]);
-  const readableBody = options.readableBody ?? true;
-
-  const facilitatorClient =
-    options.facilitatorClient ?? buildFacilitatorClient(config);
-  const server = new x402ResourceServer(facilitatorClient);
-  const schemes = schemesInUse(config);
-  for (const network of config.networks) registerScheme(server, network, schemes);
-
   if (options.routesConfig && Object.keys(options.routesConfig).length === 0) {
     throw new ConfigError(
       "routesConfig",
       "routesConfig is empty. Omit it to use config.routes, or pass at least one protected route — an empty map silently disables payment protection.",
     );
   }
-  const routes = options.routesConfig ?? (toRoutesConfig(config) as unknown as RoutesConfig);
 
-  attachHooks(server, bus, config);
-
-  const httpServer = new x402HTTPResourceServer(server, routes);
-  let initFailure: Error | undefined;
-  let initFailureEmitted = false;
-
-  const emitInitFailure = (error: Error): void => {
-    if (initFailureEmitted) return;
-    initFailureEmitted = true;
-    bus.emit(
-      makeEvent<LensEvent>({
-        type: "facilitator.error",
-        ts: new Date().toISOString(),
-        requestId: randomUUID(),
-        route: "INIT /supported",
-        scheme: "exact",
-        network: config.network,
-        amount: "0",
-        asset: "",
-        payTo: config.payTo,
-        message: error.message,
-      } as LensEvent),
-    );
-  };
-
-  // Own the facilitator probe so a failure is observable (`ready` + events)
-  // instead of an opaque HTTP 500 from the SDK's lazy init path.
-  const ready = httpServer.initialize().then(
-    () => undefined,
-    error => {
-      const asError = error instanceof Error ? error : new Error(String(error));
-      initFailure = asError;
-      emitInitFailure(asError);
-      throw asError;
-    },
+  const { bus, server, httpServer, ready, emitInitFailure, initFailure } = buildServers(
+    config,
+    options,
   );
-  // Keep `ready` rejectable for awaiters, but do not crash the process when
-  // nobody has attached yet (apps may mount middleware before awaiting ready).
-  void ready.catch(() => {});
 
   // Disable the SDK's parallel syncFacilitatorOnStart probe — `ready` above is
   // the single source of truth for initialization.
-  const inner = paymentMiddlewareFromHTTPServer(
-    httpServer,
-    undefined,
-    undefined,
-    false,
-  );
+  const inner = paymentMiddlewareFromHTTPServer(httpServer, undefined, undefined, false);
+
   const corsHeaders = buildCorsHeaders(options.cors);
   if (options.cors === true) {
-    // #region agent note — surface at build time without throwing
     process.emitWarning(
       "[x402-lens] cors: true does not set Access-Control-Allow-Origin. Pass cors: { origin: \"…\" } for browser buyers.",
       "X402LensCors",
     );
-    // #endregion
   }
 
   const grant = options.grant;
-
-  const respondFacilitatorUnavailable = (res: Response, requestId: string, route: string, error: Error): void => {
-    bus.emit(
-      makeEvent<LensEvent>({
-        type: "facilitator.error",
-        ts: new Date().toISOString(),
-        requestId,
-        route,
-        scheme: "exact",
-        network: config.network,
-        amount: "0",
-        asset: "",
-        payTo: config.payTo,
-        message: error.message,
-      } as LensEvent),
-    );
-    if (!res.headersSent) {
-      res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
-    } else if (!res.writableEnded) {
-      res.end();
-    }
-  };
+  const readableBody = options.readableBody ?? true;
 
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
-    const context = {
+    const context: RequestContext = {
       requestId: randomUUID(),
       startedAt: Date.now(),
       method: req.method,
@@ -404,27 +295,11 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       return;
     }
 
-    const emitRequired = (paymentRequired: WirePaymentRequired): void => {
-      const entries = paymentRequired.accepts ?? [];
-      const entry = entries[0];
-      bus.emit(
-        makeEvent<LensEvent>({
-          type: "payment.required",
-          requestId: context.requestId,
-          route: `${context.method} ${context.path}`,
-          scheme: entry?.scheme ?? "exact",
-          network: entry?.network ?? config.network,
-          amount: entry?.amount ?? "0",
-          asset: entry?.asset ?? "",
-          payTo: entry?.payTo ?? config.payTo,
-          offers: entries.length,
-          durationMs: Date.now() - context.startedAt,
-          findings: diagnose({ paymentRequired, now: context.startedAt }),
-        } as LensEvent),
-      );
-    };
-
-    observePaymentRequired(res, emitRequired, { mirrorBody: readableBody });
+    observePaymentRequired(
+      res,
+      paymentRequired => emitRequiredEvent(bus, config, context, paymentRequired),
+      { mirrorBody: readableBody },
+    );
 
     // Enter ALS before grant/ready so hooks share the same requestId.
     runWithRequestContext(context, () => {
@@ -459,57 +334,22 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
             });
 
             if (decision === true) {
-              bus.emit(
-                makeEvent<LensEvent>({
-                  type: "access.granted",
-                  requestId: context.requestId,
-                  route: `${context.method} ${context.path}`,
-                  scheme: "exact",
-                  network: config.network,
-                  amount: "0",
-                  asset: "",
-                  payTo: config.payTo,
-                } as LensEvent),
-              );
+              emitAccess(bus, config, context, "access.granted");
               next();
               return;
             }
 
             if (typeof decision === "string") {
-              bus.emit(
-                makeEvent<LensEvent>({
-                  type: "access.denied",
-                  requestId: context.requestId,
-                  route: `${context.method} ${context.path}`,
-                  scheme: "exact",
-                  network: config.network,
-                  amount: "0",
-                  asset: "",
-                  payTo: config.payTo,
-                  reason: decision,
-                } as LensEvent),
-              );
-              if (!res.headersSent) res.status(403).json({ error: "access_denied" });
+              emitAccess(bus, config, context, "access.denied", decision);
+              if (!res.headersSent) res.status(403).json(ACCESS_DENIED_BODY);
               return;
             }
           } catch (error) {
             const reason =
               error instanceof Error ? error.message.slice(0, 200) : "grant_error";
-            bus.emit(
-              makeEvent<LensEvent>({
-                type: "access.denied",
-                requestId: context.requestId,
-                route: `${context.method} ${context.path}`,
-                scheme: "exact",
-                network: config.network,
-                amount: "0",
-                asset: "",
-                payTo: config.payTo,
-                reason,
-              } as LensEvent),
-            );
+            emitAccess(bus, config, context, "access.denied", reason);
             if (!res.headersSent) {
-              res.status(403).json({ error: "access_denied" });
+              res.status(403).json(ACCESS_DENIED_BODY);
             }
             return;
           }
@@ -519,7 +359,7 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
           await ready;
         } catch (error) {
           const asError =
-            initFailure ??
+            initFailure() ??
             (error instanceof Error ? error : new Error(String(error)));
           emitInitFailure(asError);
           if (!res.headersSent) {
@@ -532,31 +372,18 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
         void Promise.resolve(inner(req, res, next)).catch((error: unknown) => {
           const asError = error instanceof Error ? error : new Error(String(error));
-          respondFacilitatorUnavailable(
-            res,
-            context.requestId,
-            `${context.method} ${context.path}`,
-            asError,
-          );
+          emitFacilitatorError(bus, config, context, asError);
+          if (!res.headersSent) {
+            res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+          } else if (!res.writableEnded) {
+            res.end();
+          }
         });
       })().catch((error: unknown) => {
         const asError = error instanceof Error ? error : new Error(String(error));
-        bus.emit(
-          makeEvent<LensEvent>({
-            type: "facilitator.error",
-            ts: new Date().toISOString(),
-            requestId: context.requestId,
-            route: `${context.method} ${context.path}`,
-            scheme: "exact",
-            network: config.network,
-            amount: "0",
-            asset: "",
-            payTo: config.payTo,
-            message: `middleware: ${asError.message}`,
-          } as LensEvent),
-        );
+        emitFacilitatorError(bus, config, context, asError);
         if (!res.headersSent) {
-          res.status(500).json({ error: "internal_error", code: "MIDDLEWARE_ERROR" });
+          res.status(500).json(MIDDLEWARE_ERROR_BODY);
         } else if (!res.writableEnded) {
           res.end();
         }
@@ -583,309 +410,105 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
   };
 }
 
-/**
- * Find the configured route that covers this method/path for grant callbacks.
- * Exact matches win; then Express-style `:param` / `*` segments; then method `*`.
- */
-function matchRouteConfig(
+/** The challenge shape `observePaymentRequired` hands back. */
+interface ChallengeShape {
+  accepts?: Array<{
+    scheme?: string;
+    network?: string;
+    amount?: string;
+    asset?: string;
+    payTo?: string;
+  }>;
+}
+
+function emitRequiredEvent(
+  bus: EventBus,
   config: LensConfig,
-  method: string,
-  path: string,
-): RoutePrice | undefined {
-  const candidates = config.routes.filter(
-    route => route.method === method || route.method === "*",
+  context: RequestContext,
+  paymentRequired: ChallengeShape,
+): void {
+  const entries = paymentRequired.accepts ?? [];
+  const entry = entries[0];
+  bus.emit(
+    makeEvent<LensEvent>({
+      type: "payment.required",
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: entry?.scheme ?? "exact",
+      network: entry?.network ?? config.network,
+      amount: entry?.amount ?? "0",
+      asset: entry?.asset ?? "",
+      payTo: entry?.payTo ?? config.payTo,
+      offers: entries.length,
+      durationMs: Date.now() - context.startedAt,
+      findings: diagnose({ paymentRequired: paymentRequired as never, now: context.startedAt }),
+    } as LensEvent),
   );
-  const exact = candidates.find(route => route.path === path);
-  if (exact) return exact;
-  return candidates.find(route => pathMatchesPattern(route.path, path));
 }
 
-/** Match `/users/:id` and `/files/*` style patterns against a request path. */
-function pathMatchesPattern(pattern: string, path: string): boolean {
-  if (pattern === path) return true;
-  const patternParts = pattern.split("/");
-  const pathParts = path.split("/");
-  if (patternParts.length !== pathParts.length) return false;
-  for (let index = 0; index < patternParts.length; index += 1) {
-    const expected = patternParts[index] ?? "";
-    const actual = pathParts[index] ?? "";
-    if (expected.startsWith(":") || expected === "*") continue;
-    if (expected !== actual) return false;
-  }
-  return true;
+function emitAccess(
+  bus: EventBus,
+  config: LensConfig,
+  context: RequestContext,
+  type: "access.granted" | "access.denied",
+  reason?: string,
+): void {
+  bus.emit(
+    makeEvent<LensEvent>({
+      type,
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: "exact",
+      network: config.network,
+      amount: "0",
+      asset: "",
+      payTo: config.payTo,
+      durationMs: Date.now() - context.startedAt,
+      ...(reason ? { reason } : {}),
+    } as LensEvent),
+  );
 }
 
-/**
- * Call an adapter accessor, treating a throw as "not available".
- *
- * Adapters are third-party code; a missing or throwing accessor must not turn
- * an access decision into a 500.
- */
-function safeCall<T>(read: () => T): T | undefined {
-  try {
-    return read();
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Build the SDK facilitator client, carrying auth headers and a request
- * timeout when configured.
- *
- * Auth headers must be keyed by facilitator path (`verify` / `settle` /
- * `supported`). Flat objects are rejected by `resolveConfig` before this runs,
- * so a misconfigured client never reaches the first payment request as HTTP 500.
- */
-function buildFacilitatorClient(config: LensConfig): HTTPFacilitatorClient {
-  const authHeaders = config.facilitatorHeaders;
-  const timeoutMs = config.facilitatorTimeoutMs;
-
-  return new HTTPFacilitatorClient({
-    url: config.facilitatorUrl,
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(authHeaders ? { createAuthHeaders: async () => authHeaders } : {}),
-  });
-}
-
-function buildSinks(sinkOptions: LensSinkOptions | undefined): LensSink[] {
-  const sinks: LensSink[] = [];
-  if (sinkOptions?.console ?? true) sinks.push(consoleSink());
-  if (sinkOptions?.jsonlPath) sinks.push(jsonlFileSink(sinkOptions.jsonlPath));
-  if (sinkOptions?.onEvent) sinks.push(callbackSink(sinkOptions.onEvent));
-  if (sinkOptions?.prometheus) {
-    sinks.push(
-      prometheusSink(
-        sinkOptions.prometheus === true
-          ? undefined
-          : sinkOptions.prometheus,
-      ),
-    );
-  }
-  if (sinkOptions?.otel) sinks.push(openTelemetrySink(sinkOptions.otel));
-  if (sinkOptions?.sentry) sinks.push(sentryBreadcrumbSink(sinkOptions.sentry));
-  return sinks;
-}
-
-/**
- * The three headers a browser buyer needs, and nothing else.
- *
- * A literal `*` does not cover any of them on a credentialed request, so they
- * have to be named. `Access-Control-Allow-Headers` also needs `Content-Type`
- * whenever the retry carries a JSON body, because that alone triggers a
- * preflight before the payment header is even considered.
- */
-function buildCorsHeaders(
-  cors: PaymentLensOptions["cors"],
-): Record<string, string> | undefined {
-  if (!cors) return undefined;
-  const headers: Record<string, string> = {
-    "Access-Control-Expose-Headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
-    "Access-Control-Allow-Headers": "Content-Type, PAYMENT-SIGNATURE",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  };
-  if (typeof cors === "object" && cors.origin) {
-    headers["Access-Control-Allow-Origin"] = cors.origin;
-    if (cors.origin !== "*") headers.Vary = "Origin";
-  }
-  return headers;
+function emitFacilitatorError(
+  bus: EventBus,
+  config: LensConfig,
+  context: RequestContext,
+  error: Error,
+): void {
+  bus.emit(
+    makeEvent<LensEvent>({
+      type: "facilitator.error",
+      ts: new Date().toISOString(),
+      requestId: context.requestId,
+      route: `${context.method} ${context.path}`,
+      scheme: "exact",
+      network: config.network,
+      amount: "0",
+      asset: "",
+      payTo: config.payTo,
+      message: `middleware: ${error.message}`,
+    } as LensEvent),
+  );
 }
 
 /**
  * Merge our headers into whatever the response already has, so an app's own
  * CORS layer keeps working.
  *
- * List headers (Expose/Allow-Headers/Methods) are unioned. Singleton CORS
- * headers (`Access-Control-Allow-Origin`, `Vary`) replace — comma-joining ACAO
- * produces a value browsers reject.
+ * List headers (`Expose` / `Allow-Headers` / `Methods`) are unioned. Singleton
+ * CORS headers (`Access-Control-Allow-Origin`, `Vary`) replace — comma-joining
+ * ACAO produces a value browsers reject.
  */
 function applyCorsHeaders(res: Response, headers: Record<string, string>): void {
-  const replaceHeaders = new Set(["access-control-allow-origin", "vary"]);
-  for (const [name, value] of Object.entries(headers)) {
-    const existing = res.getHeader(name);
-    if (existing === undefined || replaceHeaders.has(name.toLowerCase())) {
-      res.setHeader(name, value);
-      continue;
-    }
-    const merged = new Set(
-      String(existing)
-        .split(",")
-        .map(part => part.trim())
-        .filter(Boolean),
-    );
-    for (const item of value.split(",").map(part => part.trim())) merged.add(item);
-    res.setHeader(name, Array.from(merged).join(", "));
-  }
-}
-
-/**
- * Register the schemes this package supports on one network.
- *
- * `exact` is always registered; `upto` only when a route asks for it, so the
- * challenge for an all-`exact` deployment stays byte-identical to before.
- *
- * @param server - Resource server to register on
- * @param network - CAIP-2 network, already validated
- * @param schemes - Schemes any route on this network needs
- */
-function registerScheme(
-  server: x402ResourceServer,
-  network: string,
-  schemes: ReadonlySet<PaymentScheme>,
-): void {
-  const separator = network.indexOf(":");
-  const namespace = separator === -1 ? network : network.slice(0, separator);
-  // `Network` is a template-literal type; the value was validated as CAIP-2 by
-  // `resolveConfig` before reaching here.
-  const caip2 = network as `${string}:${string}`;
-
-  switch (namespace) {
-    case "eip155": {
-      server.register(caip2, new ExactEvmScheme());
-      if (schemes.has("upto")) server.register(caip2, new UptoEvmScheme());
-      return;
-    }
-    case "solana": {
-      server.register(caip2, new ExactSvmScheme());
-      if (schemes.has("upto")) server.register(caip2, new UptoSvmScheme({}));
-      return;
-    }
-    default:
-      throw new Error(
-        `[x402-lens] No scheme for namespace "${namespace}". This package registers exact (and upto) schemes for eip155 and solana. For any other network, keep the returned server instance and call server.register(network, scheme) yourself.`,
-      );
-  }
-}
-
-/** Which schemes the configured routes actually need. */
-function schemesInUse(config: LensConfig): Set<PaymentScheme> {
-  const used = new Set<PaymentScheme>();
-  for (const route of config.routes) used.add(route.scheme ?? "exact");
-  return used;
-}
-
-/** The three fields every event needs from a `PaymentRequirements`. */
-interface RequirementsShape {
-  scheme: string;
-  network: string;
-  amount: string;
-  asset: string;
-  payTo: string;
-}
-
-function attachHooks(server: x402ResourceServer, bus: EventBus, config: LensConfig): void {
-  server.onAfterVerify(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
-    const result = context.result as unknown as WireVerifyResponse;
-    const payload = context.paymentPayload as unknown as WirePaymentPayload;
-    const base = baseEvent(requirements, config, result.isValid ? result.payer : undefined);
-    const findings: Finding[] = diagnose({
-      verifyResponse: result,
-      paymentPayload: payload,
-      paymentRequired: syntheticChallenge(requirements),
-    });
-
-    if (!result.isValid) {
-      bus.emit(
-        makeEvent<LensEvent>({
-          ...base,
-          type: "payment.failed",
-          reason: result.invalidReason ?? "unknown",
-          findings,
-        } as LensEvent),
-      );
-      return;
-    }
-
-    bus.emit(makeEvent<LensEvent>({ ...base, type: "payment.verified" } as LensEvent));
-  });
-
-  server.onVerifyFailure(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
-    bus.emit(
-      makeEvent<LensEvent>({
-        ...baseEvent(requirements, config),
-        type: "facilitator.error",
-        message: context.error.message,
-      } as LensEvent),
-    );
-  });
-
-  server.onAfterSettle(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
-    const result = context.result as unknown as WireSettleResponse;
-    bus.emit(
-      makeEvent<LensEvent>({
-        ...baseEvent(requirements, config, result.payer),
-        type: "payment.settled",
-        txHash: result.transaction ?? "",
-        phase: context.phase,
-        findings: diagnose({ settleResponse: result }),
-      } as LensEvent),
-    );
-  });
-
-  server.onSettleFailure(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
-    const settle = settleResponseFromError(context.error);
-    bus.emit(
-      makeEvent<LensEvent>({
-        ...baseEvent(requirements, config, settle?.payer),
-        type: "payment.settle_failed",
-        reason: settle?.errorReason ?? context.error.message,
-        ...(settle?.transaction ? { txHash: settle.transaction } : {}),
-        phase: context.phase,
-        findings: diagnose({ settleResponse: settle }),
-      } as LensEvent),
-    );
-  });
-
-  server.onVerifiedPaymentCanceled(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
-    bus.emit(
-      makeEvent<LensEvent>({
-        ...baseEvent(requirements, config),
-        type: "payment.canceled",
-        cancelReason: context.reason,
-        phase: context.phase,
-      } as LensEvent),
-    );
-  });
-}
-
-function baseEvent(
-  requirements: RequirementsShape,
-  config: LensConfig,
-  buyer?: string,
-): Omit<LensEvent, "type"> {
-  const context = currentRequestContext();
-  return {
-    ts: new Date().toISOString(),
-    requestId: context?.requestId ?? randomUUID(),
-    route: `${context?.method ?? "GET"} ${context?.path ?? "/"}`,
-    scheme: requirements.scheme ?? "exact",
-    network: requirements.network ?? config.network,
-    amount: requirements.amount ?? "0",
-    asset: requirements.asset ?? "",
-    payTo: requirements.payTo ?? config.payTo,
-    ...(buyer ? { buyer } : {}),
-    ...(context ? { durationMs: Date.now() - context.startedAt } : {}),
-  } as Omit<LensEvent, "type">;
-}
-
-/**
- * Hooks receive the matched requirement, not the whole challenge. Rebuilding a
- * one-entry challenge lets the same findings rules run on both paths.
- */
-function syntheticChallenge(requirements: RequirementsShape): WirePaymentRequired {
-  return {
-    x402Version: 2,
-    accepts: [requirements as unknown as NonNullable<WirePaymentRequired["accepts"]>[number]],
-  };
+  const merged = mergeCorsHeaders(
+    name => {
+      const value = res.getHeader(name);
+      return value === undefined ? undefined : String(value);
+    },
+    headers,
+  );
+  for (const [name, value] of Object.entries(merged)) res.setHeader(name, value);
 }
 
 export type { HTTPRequestContext };
-export {
-  PrometheusRegistry,
-  prometheusHandler,
-} from "@x402-lens/core";
+export { PrometheusRegistry, prometheusHandler } from "@x402-lens/core";

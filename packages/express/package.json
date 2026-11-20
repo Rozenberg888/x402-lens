@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@x402-lens/core": "0.2.4",
+    "@x402-lens/server": "0.2.4",
     "@x402/core": "^2.31.0",
     "@x402/evm": "^2.31.0",
     "@x402/express": "^2.31.0",

@@ -9,6 +9,14 @@ import { explainPayment } from "./commands/explain.js";
 import { runDoctor } from "./commands/doctor.js";
 import { inspectEndpoint } from "./commands/inspect.js";
 import { reconcileTransaction } from "./commands/reconcile.js";
+import {
+  checkEndpoint,
+  nextState,
+  readWatchState,
+  writeWatchState,
+  type WatchResult,
+  type WatchState,
+} from "./commands/watch.js";
 import { flagEnabled, flagValue, parseArgs } from "./args.js";
 import { InputError } from "./input.js";
 
@@ -31,12 +39,18 @@ Usage:
       Check whether a settlement transaction confirmed on chain. Use this
       after settlement_pending — never retry a payment until you know.
 
+  x402-lens watch <url...> [--state <file>] [--interval <seconds>] [--once] [--json]
+      Monitor paywalls from the outside. Checks that a 402 with a readable
+      challenge comes back, and alerts when a network, price, payTo or the CORS
+      headers change. No SDK integration needed on the monitored server.
+      Runs once by default; --interval repeats until interrupted.
+
   x402-lens add "<METHOD> <path>" --file <path> --price <amount> [--write]
       Add x402 protection to an existing Express route. Prints a diff unless
       --write is passed.
 
 Options:
-  --json        Machine-readable JSON on stdout (inspect / explain / doctor / reconcile)
+  --json        Machine-readable JSON on stdout (inspect / explain / doctor / reconcile / watch)
   --help, -h    Show this help.
 
 Exit codes:
@@ -158,6 +172,65 @@ export async function main(argv: string[]): Promise<number> {
           process.stdout.write(`${result.text}\n`);
         }
         return result.exitCode;
+      }
+
+      case "watch": {
+        const urls = args.positionals;
+        if (urls.length === 0) {
+          process.stderr.write("watch requires at least one URL.\n\n" + USAGE);
+          return 2;
+        }
+
+        const statePath = flagValue(args, "state");
+        const intervalFlag = flagValue(args, "interval");
+        const intervalSeconds = intervalFlag ? Number.parseInt(intervalFlag, 10) : undefined;
+        const once = !intervalSeconds || intervalSeconds <= 0;
+
+        // Previous challenges are the whole point: without them every check is
+        // "is there a 402", which an uptime monitor already answers.
+        let state: WatchState = { lastChallenges: {} };
+        if (statePath) {
+          state = await readWatchState(statePath);
+        }
+
+        const runOnce = async (): Promise<number> => {
+          const results: WatchResult[] = [];
+          for (const url of urls) {
+            results.push(await checkEndpoint({ url }, state.lastChallenges[`GET ${url}`]));
+          }
+          state = nextState(results, state);
+          if (statePath) await writeWatchState(statePath, state);
+
+          const drifted = results.filter(result => result.drift.length > 0);
+          const failed = results.filter(result => !result.ok);
+
+          if (asJson) {
+            process.stdout.write(
+              `${JSON.stringify({ results, drifted: drifted.length, failed: failed.length }, null, 2)}\n`,
+            );
+          } else {
+            for (const result of results) {
+              const mark = result.ok ? "ok  " : "FAIL";
+              process.stdout.write(
+                `${mark} ${result.endpoint} → HTTP ${result.status}${result.error ? ` (${result.error})` : ""}\n`,
+              );
+              for (const item of result.drift) {
+                process.stdout.write(`     ${item.kind}: ${item.detail}\n`);
+              }
+            }
+          }
+
+          return failed.length > 0 || drifted.length > 0 ? 1 : 0;
+        };
+
+        if (once) return await runOnce();
+
+        // Repeating mode: run until interrupted. Kept simple deliberately —
+        // a scheduler belongs in cron or a process manager, not in this loop.
+        for (;;) {
+          await runOnce();
+          await new Promise<void>(resolve => setTimeout(resolve, intervalSeconds * 1000));
+        }
       }
 
       case "add": {

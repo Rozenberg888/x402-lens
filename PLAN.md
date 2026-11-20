@@ -54,10 +54,12 @@ empty not because nobody tried, but because nobody has sold it.
 Everything else is blocked on this. A fifth adapter does not help if the first
 four reach 459 people.
 
-- [ ] **Publish `@x402-lens/server` and `@x402-lens/hono`.** Currently
-      unpublished, so the Hono adapter is unusable for anyone outside this repo.
-      Requires `npm login` — the CLI is not authenticated on this machine, which
-      is why 0.2.4 sat unreleased for two days.
+- [ ] **Publish `@x402-lens/server`, `@x402-lens/hono`, `@x402-lens/mcp`.**
+      All three are unpublished as of 2026-11-20 (`npm view` → not found), so
+      three quarters of the work is unusable outside this repository.
+      Requires `npm login`; `npm whoami` returns 401 on this machine, which is
+      why 0.2.4 sat unreleased for two days.
+      **Blocks every other item in every stage.**
 - [ ] **Reach ten real users.** The goal is not revenue; it is learning what
       breaks. Success is one issue report from someone whose repository is not
       this one.
@@ -65,9 +67,11 @@ four reach 459 people.
       actual event JSON, not a changelog entry. The Argus report proved this
       works: an independent tester ran 21 sealed scenarios and found two real
       gaps, which is more external validation than any changelog produced.
-- [ ] **Fix the `PLAN.md` habit.** Twice now this file has asserted something
-      false (missing adapters; a shared package Express did not use). Every
-      factual claim here gets a date and a source, or it does not belong.
+- [x] **Fix the `PLAN.md` habit.** Twice this file asserted something false
+      (missing adapters; a shared package Express did not use), and it then sat
+      at 0 of 12 boxes while the MCP adapter was finished. Each claim now
+      carries a date, and a checked box means the artefact exists and was
+      verified — not that it was intended.
 
 **Exit criterion:** three integrations outside this repository, and their
 failure modes are known and documented.
@@ -80,9 +84,13 @@ failure modes are known and documented.
 pain is sharper there than in an HTTP server: an agent receives a 402 and has no
 developer sitting next to it to interpret `invalidReason`.
 
-- [ ] **`@x402-lens/mcp`.** Mounts on an MCP server the way the Express adapter
-      mounts on an app. Reuses `@x402-lens/server`, so the third adapter stays
-      thin: the only new code is the transport shim and MCP-shaped event fields.
+- [x] **`@x402-lens/mcp`.** `mcpLens().paidTool()` + `tool.wrap(handler)`. MCP
+      returns a challenge inside a tool result rather than an HTTP 402, so the
+      HTTP request flow could not be reused — but the event model, findings and
+      sinks are the same `@x402-lens/core`. The handshake stays with the SDK's
+      `createPaymentWrapper`; a guard test forbids `fetch(` / `verify(` /
+      `settle(` in the adapter so a second implementation cannot creep in.
+      (2026-11-20)
 - [ ] **Agent-readable findings.** `explain` output already has the shape an
       agent needs (code, field, problem, fix). Check whether emitting findings
       *into* the MCP error response is correct — the agent may act on them,
@@ -90,6 +98,9 @@ developer sitting next to it to interpret `invalidReason`.
 
 **Exit criterion:** an MCP server can report "why did this tool call fail to
 pay" without the operator reading raw facilitator output.
+— **partly met (2026-11-20):** the event carries the findings, so an operator
+sees them. Whether the *client* should receive them is still open, and is the
+second checkbox.
 
 ---
 

@@ -1,13 +1,19 @@
 /**
- * Mutation testing for the findings engine.
+ * Mutation testing for the findings engine and the payment path.
  *
  * Ordinary coverage cannot tell the difference between a test that checks an
  * outcome and one that merely executes the code. The `accepts[0]` bug that
  * shipped in 0.1.0 had a green suite: every test passed the code through, none
  * asserted the comparison used the entry the client chose.
  *
- * Only the diagnostics are mutated. They are the product: a wrong finding costs
- * a user hours, while a wrong sink name costs nothing.
+ * Two groups are mutated, for different reasons:
+ *
+ * - The diagnostics (`core`) are the product: a wrong finding costs a user
+ *   hours, while a wrong sink name costs nothing.
+ * - The shared payment path (`server`) is what both adapters run. A mutant that
+ *   survives there means a change to how a payment is observed, routed, or
+ *   rejected can ship without any test noticing — and it would ship to Express
+ *   and Hono at once, which is the reason the package exists.
  */
 export default {
   testRunner: "vitest",
@@ -16,6 +22,7 @@ export default {
     "packages/core/src/config.ts",
     "packages/core/src/conformance.ts",
     "packages/core/src/wire.ts",
+    "packages/server/src/index.ts",
   ],
   vitest: {
     configFile: "vitest.config.ts",

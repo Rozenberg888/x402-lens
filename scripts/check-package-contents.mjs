@@ -106,7 +106,7 @@ function requiredFiles(manifest) {
  */
 const FORBIDDEN = [/^src\//, /^test\//, /^tsconfig/, /^tsup\.config/, /\.tsbuildinfo$/];
 
-const packages = ["core", "server", "express", "hono", "cli"];
+const packages = ["core", "server", "express", "hono", "mcp", "cli"];
 const problems = [];
 
 for (const name of packages) {

@@ -14,6 +14,7 @@ export default defineConfig({
       ),
       "@x402-lens/server": fileURLToPath(new URL("./packages/server/src/index.ts", import.meta.url)),
       "@x402-lens/hono": fileURLToPath(new URL("./packages/hono/src/index.ts", import.meta.url)),
+      "@x402-lens/mcp": fileURLToPath(new URL("./packages/mcp/src/index.ts", import.meta.url)),
     },
   },
   test: {

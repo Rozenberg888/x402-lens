@@ -5,7 +5,7 @@
  * as a 402 / failed event, never as an unhandled throw in the middleware.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
@@ -30,7 +30,10 @@ beforeAll(async () => {
     payTo: PAY_TO,
     routes: { "GET /weather": "$0.001" },
     sinks: { console: false },
-    facilitatorTimeoutMs: 200,
+    // Generous enough that CPU contention from parallel test files cannot make
+    // an ordinary verify time out. The suite sets `verifyDelayMs = 2000` when it
+    // wants a timeout, so this only needs to exceed normal handler latency.
+    facilitatorTimeoutMs: 1_000,
   });
 
   const app = express();
@@ -47,6 +50,29 @@ afterAll(async () => {
     server.close(error => (error ? reject(error) : resolve())),
   );
   await facilitator.close();
+});
+
+/**
+ * Reset the shared mock before each test.
+ *
+ * Each chaos test mutates `facilitator` to inject a fault and used to restore it
+ * by hand at the end. That made a failing test poison the next one: the fault
+ * stayed in place, so the suite failed in clusters of four under CPU load
+ * instead of failing once for the reason that actually broke. Resetting here
+ * means one fault can only ever affect one test.
+ */
+beforeEach(() => {
+  facilitator.verifyStatus = 200;
+  facilitator.settleStatus = 200;
+  facilitator.verifyDelayMs = 0;
+  facilitator.settleDelayMs = 0;
+  facilitator.verifyResult = { isValid: true, payer: PAYER };
+  facilitator.settleResult = {
+    success: true,
+    transaction: `0x${"11".repeat(32)}`,
+    network: NETWORK,
+    payer: PAYER,
+  };
 });
 
 async function challenge(): Promise<WirePaymentRequired> {
@@ -92,8 +118,6 @@ describe("facilitator chaos", () => {
 
     expect(response.status).not.toBe(200);
     expect([402, 502]).toContain(response.status);
-    facilitator.verifyStatus = 200;
-    facilitator.verifyResult = { isValid: true, payer: PAYER };
   });
 
   it("surfaces verify HTTP 429 without calling the handler path as success", async () => {
@@ -105,7 +129,6 @@ describe("facilitator chaos", () => {
     });
 
     expect(response.status).not.toBe(200);
-    facilitator.verifyStatus = 200;
   });
 
   it("times out a hung verify within the configured facilitatorTimeoutMs", async () => {
@@ -119,8 +142,9 @@ describe("facilitator chaos", () => {
     const elapsed = Date.now() - started;
 
     expect(response.status).not.toBe(200);
+    // The client deadline is 1s; two seconds of delay must be cut short, and
+    // five seconds is the ceiling a hung request may ever take.
     expect(elapsed).toBeLessThan(5_000);
-    facilitator.verifyDelayMs = 0;
   });
 
   it("returns 402 when settle fails after verify succeeded", async () => {
@@ -138,13 +162,6 @@ describe("facilitator chaos", () => {
     });
 
     expect(response.status).toBe(402);
-
-    facilitator.settleResult = {
-      success: true,
-      transaction: `0x${"11".repeat(32)}`,
-      network: NETWORK,
-      payer: PAYER,
-    };
   });
 
   it("emits payment.settle_failed with populated findings on terminal settle failure", async () => {

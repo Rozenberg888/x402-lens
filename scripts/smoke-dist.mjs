@@ -60,6 +60,12 @@ check(
   ["paymentLens", "paymentLensAsync"],
 );
 
+check(
+  "@x402-lens/mcp (cjs)",
+  () => require("../packages/mcp/dist/index.cjs"),
+  ["mcpLens"],
+);
+
 // ESM is what the packages declare first in `exports`, so both paths matter.
 const coreEsm = await import("../packages/core/dist/index.js");
 check("@x402-lens/core (esm)", () => coreEsm, ["resolveConfig", "toRoutesConfig", "diagnose"]);
@@ -72,6 +78,9 @@ check("@x402-lens/server (esm)", () => serverEsm, ["buildServers"]);
 
 const honoEsm = await import("../packages/hono/dist/index.js");
 check("@x402-lens/hono (esm)", () => honoEsm, ["paymentLens"]);
+
+const mcpEsm = await import("../packages/mcp/dist/index.js");
+check("@x402-lens/mcp (esm)", () => mcpEsm, ["mcpLens"]);
 
 if (failures.length > 0) {
   process.stderr.write(`\nBuilt entry points are not usable:\n${failures.map(line => `  ${line}`).join("\n")}\n`);

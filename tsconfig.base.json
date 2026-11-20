@@ -22,7 +22,8 @@
       "@x402-lens/core": ["./packages/core/src/index.ts"],
       "@x402-lens/express": ["./packages/express/src/index.ts"],
       "@x402-lens/server": ["./packages/server/src/index.ts"],
-      "@x402-lens/hono": ["./packages/hono/src/index.ts"]
+      "@x402-lens/hono": ["./packages/hono/src/index.ts"],
+      "@x402-lens/mcp": ["./packages/mcp/src/index.ts"]
     }
   }
 }

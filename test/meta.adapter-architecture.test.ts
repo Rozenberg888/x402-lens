@@ -71,8 +71,22 @@ describe("adapter architecture", () => {
 
   it("shared layer imports no framework", () => {
     const src = source("server");
-    for (const framework of ["express", "hono"]) {
+    for (const framework of ["express", "hono", "mcp"]) {
       expect(src).not.toMatch(new RegExp(`from\\s+["']${framework}["']`));
+    }
+  });
+
+  it("the MCP adapter does not reimplement the payment handshake", () => {
+    const src = source("mcp");
+    // `@x402/mcp` owns verification and settlement. A second implementation
+    // would be a second place for a payment protocol to be wrong, and the two
+    // would diverge the first time either changed.
+    expect(src).toContain('from "@x402/mcp"');
+    expect(src).toContain("createPaymentWrapper");
+    for (const forbidden of ["fetch(", "settle(", "verify("]) {
+      expect(src, `packages/mcp/src/index.ts calls ${forbidden}, which the SDK owns`).not.toContain(
+        forbidden,
+      );
     }
   });
 });

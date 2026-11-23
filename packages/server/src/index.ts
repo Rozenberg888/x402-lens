@@ -21,7 +21,7 @@ import {
   type FacilitatorClient,
   type RoutesConfig,
 } from "@x402/core/server";
-import type { SchemeNetworkServer } from "@x402/core/types";
+import type { DeepReadonly, PaymentRequirements, SchemeNetworkServer } from "@x402/core/types";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -383,14 +383,34 @@ export function currentRequestContext(): RequestContext | undefined {
   return requestStorage.getStore();
 }
 
-/** The fields every event needs from a `PaymentRequirements`. */
-export interface RequirementsShape {
-  scheme: string;
-  network: string;
-  amount: string;
-  asset: string;
-  payTo: string;
-}
+/**
+ * The fields every lens event needs from the SDK's `PaymentRequirements`.
+ *
+ * Narrower than `PaymentRequirements` on purpose — an event needs five fields,
+ * not the whole requirement — but taken from the SDK's own type rather than
+ * restated, so a renamed or re-typed field here is a compile error instead of a
+ * silent `undefined` at runtime.
+ *
+ * `amount` and `payTo` are read through `??` below even though the SDK types
+ * them as required. That is deliberate defence for a diagnostic tool: an event
+ * is emitted on the failure path, which is exactly where a third-party SDK is
+ * most likely to hand over a partially-built requirement. The cost is two
+ * fallbacks; the alternative is throwing while diagnosing a throw.
+ */
+type RequirementsShape = DeepReadonly<
+  Pick<PaymentRequirements, "scheme" | "network" | "asset">
+> & {
+  readonly amount?: string;
+  readonly payTo?: string;
+};
+
+/**
+ * The event fields the SDK's requirements type can supply.
+ *
+ * Exported because a caller writing their own hooks needs the same mapping, and
+ * because a test asserting on `baseEvent` should not restate the shape.
+ */
+export type LensEventRequirements = RequirementsShape;
 
 /**
  * Turn SDK lifecycle callbacks into lens events.
@@ -401,7 +421,7 @@ export interface RequirementsShape {
  */
 export function attachHooks(server: x402ResourceServer, bus: EventBus, config: LensConfig): void {
   server.onAfterVerify(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
+    const requirements = context.requirements;
     const result = context.result as unknown as WireVerifyResponse;
     const payload = context.paymentPayload as unknown as WirePaymentPayload;
     const base = baseEvent(requirements, config, result.isValid ? result.payer : undefined);
@@ -427,7 +447,7 @@ export function attachHooks(server: x402ResourceServer, bus: EventBus, config: L
   });
 
   server.onVerifyFailure(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
+    const requirements = context.requirements;
     bus.emit(
       makeEvent<LensEvent>({
         ...baseEvent(requirements, config),
@@ -438,7 +458,7 @@ export function attachHooks(server: x402ResourceServer, bus: EventBus, config: L
   });
 
   server.onAfterSettle(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
+    const requirements = context.requirements;
     const result = context.result as unknown as WireSettleResponse;
     bus.emit(
       makeEvent<LensEvent>({
@@ -452,7 +472,7 @@ export function attachHooks(server: x402ResourceServer, bus: EventBus, config: L
   });
 
   server.onSettleFailure(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
+    const requirements = context.requirements;
     const settle = settleResponseFromError(context.error);
     bus.emit(
       makeEvent<LensEvent>({
@@ -467,7 +487,7 @@ export function attachHooks(server: x402ResourceServer, bus: EventBus, config: L
   });
 
   server.onVerifiedPaymentCanceled(async context => {
-    const requirements = context.requirements as unknown as RequirementsShape;
+    const requirements = context.requirements;
     bus.emit(
       makeEvent<LensEvent>({
         ...baseEvent(requirements, config),
@@ -772,3 +792,4 @@ export function buildServers(config: LensConfig, options: LensCommonOptions): Le
     initFailure: () => failure,
   };
 }
+

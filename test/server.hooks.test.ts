@@ -20,7 +20,7 @@ import {
   attachHooks,
   registerScheme,
   schemesInUse,
-  type RequirementsShape,
+  type LensEventRequirements,
 } from "@x402-lens/server";
 
 const CONFIG = {
@@ -31,7 +31,7 @@ const CONFIG = {
   routes: [],
 } as unknown as LensConfig;
 
-const REQUIREMENTS: RequirementsShape = {
+const REQUIREMENTS: LensEventRequirements = {
   scheme: "exact",
   network: "eip155:84532",
   amount: "1000",

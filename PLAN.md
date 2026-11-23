@@ -127,13 +127,20 @@ with the challenge unchanged in the first.
 product sellable to someone who has not adopted anything yet, and the cheapest
 way to test whether anyone pays at all.
 
-- [ ] **Synthetic paywall monitoring.** A URL, checked from several regions every
-      minute, alerting when: the 402 disappears, a network vanishes from the
-      challenge, CORS regresses, or the facilitator stops listing the network.
-- [ ] **Weekend MVP first.** Cron plus a Slack webhook, twenty URLs. Do not
-      build ingestion or retention until someone asks for it.
+- [x] **Synthetic paywall monitoring.** `x402-lens watch <url...>` checks from
+      the outside — no SDK on the monitored server — and reports drift against
+      the previous check: a network removed from `accepts`, `payTo` changed, a
+      price moved, the challenge gone entirely. The comparison is "would a client
+      that paid successfully before still be able to pay now", which an uptime
+      check cannot answer. (2026-11-23)
+- [x] **Weekend MVP first.** Slack alerting via `--slack` or
+      `X402_LENS_SLACK_WEBHOOK`, one channel and one format, failure returned
+      rather than thrown. State is persisted through a temp file and rename so a
+      killed run cannot erase the baseline. (2026-11-23)
 - [ ] **Price it before building it.** If nobody will pay for twenty URLs
       checked every minute, the dashboard behind it will not sell either.
+      **Cannot be done from this repository.** It needs a person to ask, and the
+      number to be quoted.
 
 **Exit criterion:** one paying customer, or a documented reason nobody pays.
 

@@ -86,16 +86,39 @@ export async function main(argv: string[]): Promise<number> {
           process.stderr.write("inspect requires a URL.\n\n" + USAGE);
           return 2;
         }
-        const result = await inspectEndpoint({
-          url,
-          ...(flagValue(args, "method") ? { method: flagValue(args, "method") as string } : {}),
-          ...(flagValue(args, "header")
-            ? { headers: parseHeaderFlags(argv) }
-            : {}),
-          ...(flagValue(args, "timeout")
-            ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
-            : {}),
-        });
+        let result: Awaited<ReturnType<typeof inspectEndpoint>>;
+        try {
+          result = await inspectEndpoint({
+            url,
+            ...(flagValue(args, "method") ? { method: flagValue(args, "method") as string } : {}),
+            ...(flagValue(args, "header")
+              ? { headers: parseHeaderFlags(argv) }
+              : {}),
+            ...(flagValue(args, "timeout")
+              ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
+              : {}),
+          });
+        } catch (error) {
+          // `fetch` throws before any response exists: a malformed URL, a DNS
+          // failure, a refused connection. Letting it reach the top-level handler
+          // produced "Unexpected error: Failed to parse URL from …" on stderr and
+          // nothing on stdout — which breaks the `--json` contract (machine
+          // readers got an empty stream) and tells a human nothing about which
+          // argument was wrong. `doctor` and `watch` already wrap this; inspect
+          // was the one that did not.
+          const asError = error instanceof Error ? error : new Error(String(error));
+          const message = /Failed to parse URL/i.test(asError.message)
+            ? `"${url}" is not a valid URL. Include the scheme, for example https://api.example.com/weather.`
+            : `Could not reach ${url}: ${asError.message}`;
+          if (asJson) {
+            process.stdout.write(
+              `${JSON.stringify({ status: 0, error: message, exitCode: 1 }, null, 2)}\n`,
+            );
+          } else {
+            process.stderr.write(`${message}\n`);
+          }
+          return 1;
+        }
         if (asJson) {
           process.stdout.write(
             `${JSON.stringify(
@@ -188,6 +211,10 @@ export async function main(argv: string[]): Promise<number> {
         const intervalSeconds = intervalFlag ? Number.parseInt(intervalFlag, 10) : undefined;
         const once = !intervalSeconds || intervalSeconds <= 0;
 
+        // Worst exit code seen across runs, so an interrupted or long-running
+        // monitor reports failure if any check ever failed.
+        let lastExitCode = 0;
+
         // Slack webhook from the flag or the environment. It is a credential, so
         // the environment is the expected source; the flag exists for a one-off
         // check without exporting anything.
@@ -256,12 +283,46 @@ export async function main(argv: string[]): Promise<number> {
 
         if (once) return await runOnce();
 
-        // Repeating mode: run until interrupted. Kept simple deliberately —
-        // a scheduler belongs in cron or a process manager, not in this loop.
-        for (;;) {
-          await runOnce();
-          await new Promise<void>(resolve => setTimeout(resolve, intervalSeconds * 1000));
+        // Repeating mode: run until interrupted. Kept simple deliberately — a
+        // scheduler belongs in cron or a process manager, not in this loop.
+        //
+        // SIGINT still has to be handled: without it, Ctrl+C kills the process
+        // wherever it happens to be, which can be mid-write of the state file.
+        // The write is atomic (temp file plus rename), so a truncated state file
+        // is not the risk — the risk is that the operator gets no confirmation
+        // and no chance to see the last result. Stopping between checks is what
+        // makes the loop's lifetime predictable.
+        let stopping = false;
+        const onSignal = (): void => {
+          stopping = true;
+        };
+        process.once("SIGINT", onSignal);
+        process.once("SIGTERM", onSignal);
+
+        try {
+          while (!stopping) {
+            const code = await runOnce();
+            // Record the worst outcome seen, so an interrupted monitor still
+            // exits non-zero if any check failed before the signal.
+            if (code !== 0) lastExitCode = code;
+            if (stopping) break;
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(resolve, intervalSeconds * 1000);
+              // Wake immediately on a signal instead of waiting out the interval.
+              const wake = (): void => {
+                clearTimeout(timer);
+                resolve();
+              };
+              process.once("SIGINT", wake);
+              process.once("SIGTERM", wake);
+            });
+          }
+        } finally {
+          process.off("SIGINT", onSignal);
+          process.off("SIGTERM", onSignal);
         }
+
+        return lastExitCode;
       }
 
       case "add": {
@@ -366,7 +427,15 @@ if (isDirectRun) {
       process.exitCode = code;
     })
     .catch(error => {
-      process.stderr.write(`Unexpected error: ${(error as Error).message}\n`);
+      // A bug in this CLI, not a user mistake. It still has to honour `--json`:
+      // a machine reader that gets a human sentence on stderr and an empty
+      // stdout cannot tell this apart from success.
+      const message = (error as Error).message;
+      if (process.argv.includes("--json")) {
+        process.stdout.write(`${JSON.stringify({ error: message, exitCode: 1 }, null, 2)}\n`);
+      } else {
+        process.stderr.write(`Unexpected error: ${message}\n`);
+      }
       process.exitCode = 1;
     });
 }

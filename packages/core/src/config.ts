@@ -863,6 +863,21 @@ function normalisePrice(
     if (trimmed.length === 0) {
       throw new ConfigError(at, `${at}.price is empty. Use a decimal such as "0.001".`);
     }
+    // A "$" prefix is the SDK's USD marker; the digits after it must still be a
+    // plain decimal, so strip it before checking.
+    const digits = trimmed.startsWith("$") ? trimmed.slice(1).trim() : trimmed;
+    if (!/^\d+(\.\d+)?$/.test(digits)) {
+      throw new ConfigError(
+        at,
+        `${at}.price "${trimmed}" is not a decimal amount. Use digits with at most one decimal point, such as "0.001". A negative, scientific-notation or non-numeric value reaches the SDK, which throws per request — every buyer gets HTTP 500 instead of a 402.`,
+      );
+    }
+    if (Number(digits) <= 0) {
+      throw new ConfigError(
+        at,
+        `${at}.price "${trimmed}" is not a positive amount. A zero or negative price produces a 402 whose amount is 0, so the route is advertised as paid while charging nothing — and a negative one makes the SDK throw on every request.`,
+      );
+    }
     return { price: trimmed };
   }
 
@@ -885,6 +900,12 @@ function normalisePrice(
       throw new ConfigError(
         at,
         `${at}.price.amount "${amount}" must be atomic units — an integer string. The SDK converts "$" prices to atomic units itself, but an explicit asset price is already final.`,
+      );
+    }
+    if (BigInt(amount) === 0n) {
+      throw new ConfigError(
+        at,
+        `${at}.price.amount is "0". A zero amount advertises the route as paid while charging nothing; remove the route from the map instead if it should be free.`,
       );
     }
     return { price: { asset, amount } };

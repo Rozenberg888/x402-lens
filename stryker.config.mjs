@@ -34,11 +34,16 @@ export default {
   htmlReporter: { fileName: "reports/mutation/index.html" },
   jsonReporter: { fileName: "reports/mutation/mutation.json" },
   thresholds: {
-    // Raise as gaps close. A threshold below the current score silently allows
-    // regressions, so this is a floor, not a goal.
+    // A threshold below the current score silently allows regressions, so this
+    // is a floor, not a goal — and it has to sit at the measured score, not
+    // under it. At `break: 70` with the suite scoring 73, roughly twenty killed
+    // mutants could be lost before the gate noticed, which is a whole broken
+    // rule passing CI. Raised to 81 after the contract tests below took the
+    // score from 73 to 84: the gate now bites on the first rule that breaks
+    // rather than the fifth.
     high: 90,
-    low: 80,
-    break: 70,
+    low: 85,
+    break: 81,
   },
   timeoutMS: 20000,
   concurrency: 4,

@@ -53,11 +53,14 @@ import {
   MIDDLEWARE_ERROR_BODY,
   buildCorsHeaders,
   buildServers,
+  decodedRoutePath,
   emitAccess,
   emitMiddlewareError,
   emitRequired,
   matchRouteConfig,
   mergeCorsHeaders,
+  normalisePassedConfig,
+  normaliseRouteInput,
   runWithRequestContext,
   safeCall,
   type CustomSchemeRegistration,
@@ -225,38 +228,6 @@ export async function paymentLensAsync(
 }
 
 /** Match `resolveConfig` trailing-slash stripping for pre-built configs. */
-function normalisePassedConfig(config: LensConfig): LensConfig {
-  return {
-    ...config,
-    facilitatorUrl: config.facilitatorUrl.replace(/\/+$/, ""),
-  };
-}
-
-function normaliseRouteInput(routes: PaymentLensOptions["routes"]): RouteInput[] | undefined {
-  if (!routes) return undefined;
-  if (Array.isArray(routes)) return routes;
-  // A bare string is the common case; an object allows per-route options such as
-  // `paymentFlow` without dropping to the array form.
-  return Object.entries(routes).map(([route, value]) => {
-    if (typeof value === "string") return { route, price: value };
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return { route, ...value };
-    }
-    throw new ConfigError(
-      "routes",
-      `routes["${route}"] must be a price string or an options object, got ${JSON.stringify(value)}.`,
-    );
-  });
-}
-
-function decodedRoutePath(path: string): string {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return path;
-  }
-}
-
 function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens {
   if (options.routesConfig && Object.keys(options.routesConfig).length === 0) {
     throw new ConfigError(

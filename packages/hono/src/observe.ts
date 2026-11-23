@@ -16,18 +16,10 @@
 
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { WirePaymentRequired } from "@x402-lens/core";
+import { bodyFieldsFromChallenge } from "@x402-lens/server";
 
-/** Fields a client needs to see without base64-decoding the header. */
-export function bodyFieldsFromChallenge(
-  paymentRequired: WirePaymentRequired,
-): Record<string, unknown> {
-  return {
-    x402Version: paymentRequired.x402Version,
-    ...(paymentRequired.error ? { error: paymentRequired.error } : {}),
-    ...(paymentRequired.resource ? { resource: paymentRequired.resource } : {}),
-    ...(paymentRequired.accepts ? { accepts: paymentRequired.accepts } : {}),
-  };
-}
+/** Re-exported so this module stays the one place an adapter imports from. */
+export { bodyFieldsFromChallenge };
 
 export interface ObserveOptions {
   /**

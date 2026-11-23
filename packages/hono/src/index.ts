@@ -49,11 +49,14 @@ import {
   MIDDLEWARE_ERROR_BODY,
   buildCorsHeaders,
   buildServers,
+  decodedRoutePath,
   emitAccess,
   emitMiddlewareError,
   emitRequired,
   matchRouteConfig,
   mergeCorsHeaders,
+  normalisePassedConfig,
+  normaliseRouteInput,
   runWithRequestContext,
   safeCall,
   type CustomSchemeRegistration,
@@ -175,26 +178,6 @@ export async function paymentLensAsync(
     ? (assertLensConfig(options.config), normalisePassedConfig(options.config))
     : await loadConfig({ ...options, routes: normaliseRouteInput(options.routes) });
   return buildLens(config, options);
-}
-
-/** Match `resolveConfig` trailing-slash stripping for pre-built configs. */
-function normalisePassedConfig(config: LensConfig): LensConfig {
-  return { ...config, facilitatorUrl: config.facilitatorUrl.replace(/\/+$/, "") };
-}
-
-function normaliseRouteInput(routes: PaymentLensOptions["routes"]): RouteInput[] | undefined {
-  if (!routes) return undefined;
-  if (Array.isArray(routes)) return routes;
-  return Object.entries(routes).map(([route, value]) => {
-    if (typeof value === "string") return { route, price: value };
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return { route, ...value };
-    }
-    throw new ConfigError(
-      "routes",
-      `routes["${route}"] must be a price string or an options object, got ${JSON.stringify(value)}.`,
-    );
-  });
 }
 
 function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens {
@@ -370,14 +353,6 @@ function applyCorsHeaders(c: Context, headers: Record<string, string>): void {
   );
   for (const [name, value] of Object.entries(merged)) {
     c.header(name, value);
-  }
-}
-
-function decodedRoutePath(path: string): string {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return path;
   }
 }
 

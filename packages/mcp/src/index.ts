@@ -23,18 +23,11 @@ import {
   EventBus,
   PrometheusRegistry,
   callbackSink,
-  consoleSink,
   diagnose,
-  jsonlFileSink,
   makeEvent,
-  openTelemetrySink,
-  prometheusSink,
-  sentryBreadcrumbSink,
   type Finding,
   type LensEvent,
   type LensSink,
-  type OtelTracerLike,
-  type SentryLike,
   type WirePaymentRequirements,
   type WireSettleResponse,
 } from "@x402-lens/core";
@@ -49,22 +42,16 @@ import {
   type WrappedToolResult,
 } from "@x402/mcp";
 import type { x402ResourceServer } from "@x402/core/server";
+import { buildSinks, type LensSinkOptions } from "@x402-lens/server";
 
-/** Where the lens sends events. Same options as the HTTP adapters. */
-export interface McpLensSinkOptions {
-  /** Print a compact line per event. Defaults to `true`. */
-  console?: boolean;
-  /** Append newline-delimited JSON to this path. */
-  jsonlPath?: string;
-  /** Called for every event. Exceptions are caught and never reach the caller. */
-  onEvent?: (event: LensEvent) => void;
-  /** Record counters for Prometheus. */
-  prometheus?: boolean | PrometheusRegistry;
-  /** OpenTelemetry tracer. */
-  otel?: OtelTracerLike;
-  /** Sentry-compatible handle. */
-  sentry?: SentryLike;
-}
+/**
+ * Where the lens sends events.
+ *
+ * The same shape the HTTP adapters take, re-exported under an MCP-specific name
+ * so an import from this package does not have to reach into `@x402-lens/server`.
+ * A separate interface would be a second definition to keep in step for no gain.
+ */
+export type McpLensSinkOptions = LensSinkOptions;
 
 /** Configuration shared by every tool in one lens. */
 export interface McpLensOptions {
@@ -126,21 +113,6 @@ export interface McpLens {
   on(listener: (event: LensEvent) => void): () => void;
   /** Flush sinks and stop emitting. */
   close(): Promise<void>;
-}
-
-function buildSinks(sinkOptions: McpLensSinkOptions | undefined): LensSink[] {
-  const sinks: LensSink[] = [];
-  if (sinkOptions?.console ?? true) sinks.push(consoleSink());
-  if (sinkOptions?.jsonlPath) sinks.push(jsonlFileSink(sinkOptions.jsonlPath));
-  if (sinkOptions?.onEvent) sinks.push(callbackSink(sinkOptions.onEvent));
-  if (sinkOptions?.prometheus) {
-    sinks.push(
-      prometheusSink(sinkOptions.prometheus === true ? undefined : sinkOptions.prometheus),
-    );
-  }
-  if (sinkOptions?.otel) sinks.push(openTelemetrySink(sinkOptions.otel));
-  if (sinkOptions?.sentry) sinks.push(sentryBreadcrumbSink(sinkOptions.sentry));
-  return sinks;
 }
 
 /**

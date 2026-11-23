@@ -29,6 +29,7 @@ import { UptoSvmScheme } from "@x402/svm/upto/server";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import {
+  ConfigError,
   EventBus,
   PrometheusRegistry,
   callbackSink,
@@ -47,6 +48,8 @@ import {
   type LensSink,
   type OtelTracerLike,
   type PaymentScheme,
+  type RouteInput,
+  type RouteMap,
   type RoutePrice,
   type SentryLike,
   type WirePaymentPayload,
@@ -203,6 +206,89 @@ export function mergeCorsHeaders(
     merged[name] = Array.from(items).join(", ");
   }
   return merged;
+}
+
+/**
+ * Strip trailing slashes from a pre-built config's facilitator URL.
+ *
+ * `resolveConfig` already does this for configuration it built itself. A caller
+ * who assembles `LensConfig` by hand bypasses that, and the URL then differs
+ * from what the rest of the package assumes — `GET //supported` on a
+ * double-slashed URL is not the same request as `GET /supported`.
+ *
+ * @param config - Resolved configuration, possibly hand-built
+ * @returns The same configuration with a normalised URL
+ */
+export function normalisePassedConfig(config: LensConfig): LensConfig {
+  return { ...config, facilitatorUrl: config.facilitatorUrl.replace(/\/+$/, "") };
+}
+
+/**
+ * Accept the short route map form and produce the array the SDK wants.
+ *
+ * `{ "GET /weather": "$0.001" }` is what people write; `RouteInput[]` is what
+ * `resolveConfig` consumes. Both adapters offered the short form, so both had a
+ * copy of this conversion.
+ *
+ * @param routes - Short map or array form, or undefined
+ * @returns Normalised array, or undefined when no routes were given
+ * @throws {ConfigError} When an entry is neither a price string nor an options object
+ */
+export function normaliseRouteInput(
+  routes: RouteMap | RouteInput[] | undefined,
+): RouteInput[] | undefined {
+  if (!routes) return undefined;
+  if (Array.isArray(routes)) return routes;
+  // A bare string is the common case; an object allows per-route options such as
+  // `paymentFlow` without dropping to the array form.
+  return Object.entries(routes).map(([route, value]) => {
+    if (typeof value === "string") return { route, price: value };
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return { route, ...value };
+    }
+    throw new ConfigError(
+      "routes",
+      `routes["${route}"] must be a price string or an options object, got ${JSON.stringify(value)}.`,
+    );
+  });
+}
+
+/**
+ * Decode a request path, falling back to the raw value.
+ *
+ * `decodeURIComponent` throws on a malformed escape such as `%ZZ`. A client can
+ * send that; the lens must not answer 500 because of it, so the raw path is used
+ * and the route lookup simply fails to match.
+ *
+ * @param path - Raw request path
+ * @returns Decoded path, or the input when it cannot be decoded
+ */
+export function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The challenge fields a client needs without base64-decoding the header.
+ *
+ * Shared by both HTTP adapters: the 402 body is server-defined in v2, so
+ * mirroring the challenge there is what makes `curl | jq` usable.
+ *
+ * @param paymentRequired - Decoded challenge
+ * @returns The subset to merge into a JSON body
+ */
+export function bodyFieldsFromChallenge(
+  paymentRequired: WirePaymentRequired,
+): Record<string, unknown> {
+  return {
+    x402Version: paymentRequired.x402Version,
+    ...(paymentRequired.error ? { error: paymentRequired.error } : {}),
+    ...(paymentRequired.resource ? { resource: paymentRequired.resource } : {}),
+    ...(paymentRequired.accepts ? { accepts: paymentRequired.accepts } : {}),
+  };
 }
 
 /**

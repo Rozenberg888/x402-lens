@@ -141,9 +141,15 @@ Not features; places where the package implies more than it does.
       the ecosystem and "not checked" is a weaker answer than "checked".
       Needs the Solana SDK — a real dependency cost, so it is a decision, not a
       task.
-- [ ] **`batch-settlement` and `auth-capture`.** Both exist in the SDK and are not
-      registered here. `upto` was the one with a clear buyer story; these need
-      one too before they earn code.
+- [x] **`batch-settlement` and `auth-capture`.** Resolved, but not by adding
+      them to configuration. Reading their types showed why that cannot work:
+      both need runtime objects — channel storage for `batch-settlement`, an
+      authorizer signer for `auth-capture` — which an environment variable cannot
+      express. Instead `extraSchemes` accepts the built instance, so any SDK
+      scheme works, including ones newer than this release.
+      This also fixed a real dead end: the unsupported-namespace error told the
+      reader to call `server.register(...)` themselves, which was impossible —
+      the throw happens before the caller ever sees the server. (2026-11-23)
 - [ ] **CDP facilitator fixtures.** Golden fixtures exist for `x402.org` only.
       A capture from CDP would catch spec drift in the second-largest
       facilitator before users do.

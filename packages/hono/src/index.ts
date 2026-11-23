@@ -56,10 +56,11 @@ import {
   mergeCorsHeaders,
   runWithRequestContext,
   safeCall,
-  type LensCommonOptions,
+  type CustomSchemeRegistration,
   type LensSinkOptions,
   type RequestContext,
-} from "@x402-lens/server";import { observePaymentRequired } from "./observe.js";
+} from "@x402-lens/server";
+import { observePaymentRequired } from "./observe.js";
 
 export { ACCESS_DENIED_BODY, FACILITATOR_UNAVAILABLE_BODY, MIDDLEWARE_ERROR_BODY };
 export type { LensSinkOptions };
@@ -83,6 +84,15 @@ export interface PaymentLensOptions extends Omit<LensConfigInput, "routes"> {
   sinks?: LensSinkOptions;
   /** Extra sinks, appended after the ones built from `sinks`. */
   extraSinks?: LensSink[];
+  /**
+   * Schemes to register in addition to the ones this package ships.
+   *
+   * For `batch-settlement`, `auth-capture`, or a scheme newer than this release.
+   * They cannot be named in configuration because they need runtime objects —
+   * channel storage, an authorizer signer — so the built instance is passed here
+   * instead.
+   */
+  extraSchemes?: CustomSchemeRegistration[];
   /** Override the `RoutesConfig` handed to `@x402/hono`, for advanced setups. */
   routesConfig?: RoutesConfig;
   /** Mirror the decoded challenge into the 402 JSON body. On by default. */

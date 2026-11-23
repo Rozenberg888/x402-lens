@@ -21,6 +21,7 @@ import {
   type FacilitatorClient,
   type RoutesConfig,
 } from "@x402/core/server";
+import type { SchemeNetworkServer } from "@x402/core/types";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
@@ -93,6 +94,15 @@ export interface LensCommonOptions {
   sinks?: LensSinkOptions;
   /** Extra sinks, appended after the ones built from `sinks`. */
   extraSinks?: LensSink[];
+  /**
+   * Schemes to register in addition to the ones this package ships.
+   *
+   * For `batch-settlement`, `auth-capture`, or a scheme newer than this release.
+   * They cannot be named in configuration because they need runtime objects —
+   * channel storage, an authorizer signer — so the built instance is passed
+   * here instead.
+   */
+  extraSchemes?: CustomSchemeRegistration[];
   /** Override the `RoutesConfig` handed to the official middleware. */
   routesConfig?: RoutesConfig;
   /** Mirror the decoded challenge into the 402 JSON body. Defaults to true. */
@@ -196,10 +206,28 @@ export function mergeCorsHeaders(
 }
 
 /**
+ * A scheme the caller registers themselves.
+ *
+ * For a scheme this package does not ship — `batch-settlement`, `auth-capture`,
+ * or anything newer — configuration cannot describe it: those schemes need
+ * runtime objects (channel storage, an authorizer signer) that an environment
+ * variable cannot express. So the caller passes the built scheme itself rather
+ * than a name.
+ */
+export interface CustomSchemeRegistration {
+  /** CAIP-2 network the scheme applies to. */
+  network: string;
+  /** Scheme identifier, e.g. `"batch-settlement"`. */
+  scheme: string;
+  /** The SDK scheme instance, from `@x402/evm` or `@x402/svm`. */
+  implementation: SchemeNetworkServer;
+}
+
+/**
  * Register the schemes this package supports on one network.
  *
- * `exact` is always registered; `upto` only when a route asks for it, so the
- * challenge for an all-`exact` deployment stays byte-identical.
+ * `exact` is always registered; the others only when a route asks for them, so
+ * the challenge for an all-`exact` deployment stays byte-identical.
  *
  * @param server - Resource server to register on
  * @param network - CAIP-2 network, already validated
@@ -229,7 +257,7 @@ export function registerScheme(
     }
     default:
       throw new Error(
-        `[x402-lens] No scheme for namespace "${namespace}". This package registers exact (and upto) schemes for eip155 and solana. For any other network, keep the returned server instance and call server.register(network, scheme) yourself.`,
+        `[x402-lens] No scheme for namespace "${namespace}". This package ships exact (and upto) for eip155 and solana. For any other network, or for batch-settlement / auth-capture, pass the built scheme as extraSchemes: [{ network: "${network}", scheme: "…", implementation }].`,
       );
   }
 }
@@ -587,7 +615,26 @@ export function buildServers(config: LensConfig, options: LensCommonOptions): Le
 
   const server = new x402ResourceServer(facilitatorClient);
   const schemes = schemesInUse(config);
-  for (const network of config.networks) registerScheme(server, network, schemes);
+
+  // Custom schemes first. A caller supplying their own implementation for a
+  // network this package does not ship — `xrpl:1` with a custom scheme, or
+  // `batch-settlement` anywhere — must not hit the namespace throw below.
+  const customNetworks = new Set<string>();
+  for (const custom of options.extraSchemes ?? []) {
+    server.register(custom.network as `${string}:${string}`, custom.implementation);
+    customNetworks.add(custom.network);
+  }
+
+  for (const network of config.networks) {
+    // Skip only networks the caller fully covered. If they registered one
+    // scheme for a network, the built-in `exact` is still worth adding: the
+    // common case should not require a registration list.
+    const suppliedExact = options.extraSchemes?.some(
+      custom => custom.network === network && custom.scheme === "exact",
+    );
+    if (customNetworks.has(network) && suppliedExact) continue;
+    registerScheme(server, network, schemes);
+  }
 
   const routes = options.routesConfig ?? (toRoutesConfig(config) as unknown as RoutesConfig);
   attachHooks(server, bus, config);

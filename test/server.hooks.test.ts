@@ -298,10 +298,11 @@ describe("registerScheme", () => {
   it("names the escape hatch in the unsupported-namespace message", () => {
     const { register } = fakeServer();
 
-    // The message has to say what to do instead, because the alternative is
-    // reading this package's source.
+    // The message has to say what to do instead. The previous wording told the
+    // reader to call `server.register(...)` themselves, which is impossible: the
+    // throw happens before the caller ever sees the server instance.
     expect(() => registerScheme({ register } as never, "xrpl:1", new Set(["exact"]))).toThrow(
-      /server\.register\(network, scheme\)/,
+      /extraSchemes/,
     );
   });
 

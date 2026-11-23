@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`extraSchemes`** — register any SDK scheme the configuration cannot name.
+  `batch-settlement` and `auth-capture` need runtime objects (channel storage, an
+  authorizer signer), so they cannot be described by an environment variable;
+  the built instance is passed instead. This also unblocks networks this package
+  does not ship, such as `xrpl:1` with a custom scheme.
 - **`@x402-lens/mcp`** — `mcpLens().paidTool()` for paid MCP tool calls.
   MCP returns a challenge inside a tool result rather than an HTTP 402, so this
   adapter cannot reuse the HTTP request flow; the event model, findings engine
@@ -38,6 +43,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The unsupported-namespace error told the reader to call
+  `server.register(network, scheme)` themselves. That was impossible: the throw
+  happens during `buildServers`, before the caller can reach the returned
+  server. It now names `extraSchemes`, which works.
 - Hono answered a middleware failure with Hono's bare-text 500 instead of the
   structured `MIDDLEWARE_ERROR` body the Express adapter sends. The
   `requiresPayment` call was unguarded, so an exception escaped the lens.

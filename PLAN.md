@@ -143,12 +143,16 @@ way to test whether anyone pays at all.
 
 Not features; places where the package implies more than it does.
 
-- [ ] **Solana transaction-level inspection.** Current Solana support checks the
-      advertised recipient and mint, nothing inside the base64 wire transaction.
-      That is honest and documented, but `exact` on Solana is a large share of
-      the ecosystem and "not checked" is a weaker answer than "checked".
-      Needs the Solana SDK — a real dependency cost, so it is a decision, not a
-      task.
+- [x] **Solana transaction-level inspection.** Resolved to the useful half.
+      Instruction-level parsing is still refused on purpose: it needs the Solana
+      program definitions, `@x402/svm` brings six dependencies into a package
+      that promises "no framework, no SDK", and a wrong guess about a transfer
+      instruction produces a confident false finding. What is checked now is the
+      envelope, which needs no SDK and cannot be wrong that way:
+      `transaction_not_base64` (a client sending raw bytes, a JSON array or a
+      truncated string — today this surfaces as an opaque facilitator
+      `invalid_reason`) and `transaction_too_short` (valid base64 that cannot be
+      a signed transaction). (2026-11-23)
 - [x] **`batch-settlement` and `auth-capture`.** Resolved, but not by adding
       them to configuration. Reading their types showed why that cannot work:
       both need runtime objects — channel storage for `batch-settlement`, an

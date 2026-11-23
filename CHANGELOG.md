@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Solana payload envelope checks.** `transaction_not_base64` and
+  `transaction_too_short`. A client sending raw bytes, a JSON array or a
+  truncated string used to surface as an opaque facilitator `invalid_reason`
+  that said nothing about encoding. Instruction-level parsing is still refused —
+  it needs the Solana program definitions, and a wrong guess about a transfer is
+  worse than silence — so these check the envelope only.
 - **`extraSchemes`** — register any SDK scheme the configuration cannot name.
   `batch-settlement` and `auth-capture` need runtime objects (channel storage, an
   authorizer signer), so they cannot be described by an environment variable;

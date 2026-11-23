@@ -18,6 +18,9 @@ coverage/
 
 # Mutation testing output — generated, large, and rebuilt on demand.
 reports/
+# Stryker's per-run sandbox copies the whole tree. It is deleted when the run
+# finishes, so tracking it only ever captures a snapshot mid-run.
+.stryker-tmp/
 
 # Generated GitHub Pages site (built in CI).
 site/

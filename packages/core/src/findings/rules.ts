@@ -62,6 +62,7 @@ export function diagnose(input: DiagnosisInput): Finding[] {
     ...checkPayTo(input),
     ...checkAsset(input),
     ...checkSolanaAsset(paymentRequired),
+    ...checkSolanaEnvelope(input),
     ...checkEip712Domain(input),
     ...checkAuthorizationWindow(input),
     ...checkVerifyVerdict(input),
@@ -311,6 +312,86 @@ function checkPayTo({
   findings.push(...checkSolanaRecipient(paymentRequired));
 
   return findings;
+}
+
+/**
+ * The Solana payload envelope: is it a base64 blob, and is it big enough to be a
+ * signed transaction?
+ *
+ * Deliberately not instruction parsing. Reading a transfer instruction means
+ * knowing the program and its layout, and a wrong guess produces a confident
+ * finding that is false — worse than silence. The envelope, by contrast, can be
+ * judged in a dozen lines with no SDK and no guessing.
+ *
+ * These two checks cover the failures that actually reach a user as an opaque
+ * facilitator `invalid_reason`: a client sending raw bytes, a JSON array, or a
+ * truncated string. Nothing said "the encoding is wrong", and nothing could.
+ */
+function checkSolanaEnvelope({ paymentPayload }: DiagnosisInput): Finding[] {
+  const accepted = paymentPayload?.accepted;
+  // Scoped to Solana: an EVM payload has no `transaction` field, and firing
+  // there would add noise to every EVM payment.
+  if (!accepted?.network?.startsWith("solana:")) return [];
+
+  const raw = (paymentPayload?.payload as { transaction?: unknown } | undefined)?.transaction;
+  // A missing field is a different defect, already reported by the shape
+  // checks. Repeating it here trains people to skim past duplicates.
+  if (typeof raw !== "string") return [];
+
+  const findings: Finding[] = [];
+
+  if (!isBase64(raw)) {
+    findings.push(
+      finding(
+        "error",
+        "transaction_not_base64",
+        "payment.payload.transaction",
+        "payment.payload.transaction is not valid base64, so it cannot be a serialized Solana transaction. A client sending raw bytes, a JSON array, or a truncated string fails at this point, and the facilitator's invalid_reason says nothing about encoding.",
+        "Serialize the signed transaction with `transaction.serialize().toString('base64')` and send that string.",
+      ),
+    );
+    return findings;
+  }
+
+  const bytes = Buffer.from(raw, "base64");
+  // Minimal plausible size: one 64-byte signature plus a message header and at
+  // least a fee payer and a program id. Anything smaller decoded from valid
+  // base64 cannot be a transaction, whatever it is.
+  const MIN_SIGNED_TRANSACTION_BYTES = 64 + 3 + 32 + 1;
+  if (bytes.length < MIN_SIGNED_TRANSACTION_BYTES) {
+    findings.push(
+      finding(
+        "error",
+        "transaction_too_short",
+        "payment.payload.transaction",
+        `payment.payload.transaction decodes to ${bytes.length} bytes, too short to be a signed Solana transaction (a single signature alone is 64 bytes).`,
+        "Send the complete serialized transaction — signature plus message — not a placeholder, a hash, or a truncated blob.",
+      ),
+    );
+  }
+
+  return findings;
+}
+
+/**
+ * True when `value` is well-formed base64.
+ *
+ * Length is NOT required to be a multiple of four: unpadded base64 is legal and
+ * decodes correctly, so rejecting it would be a false finding on a real payment.
+ * The round-trip is what decides — a string that does not survive
+ * decode-then-encode is base64-looking, not base64.
+ *
+ * @param value - Candidate string
+ * @returns Whether it decodes as base64
+ */
+function isBase64(value: string): boolean {
+  if (value.length === 0) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+  // Padding, when present, must put the length on a four-byte boundary.
+  if (value.includes("=") && value.length % 4 !== 0) return false;
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.length === 0) return false;
+  return bytes.toString("base64").replace(/=+$/, "") === value.replace(/=+$/, "");
 }
 
 /**

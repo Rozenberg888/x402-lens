@@ -252,10 +252,18 @@ export function resolveConfig(input: ResolveConfigInput = {}): LensConfig {
     );
   }
 
-  const maxTimeoutSeconds =
+  // Validated, not merely defaulted. Only the environment spelling was checked
+  // before, so an explicit option, a config-file value and a per-route override
+  // all reached the wire unchecked — measured: `-5` was advertised as
+  // `maxTimeoutSeconds: -5`, `NaN` as `null`, and `0.5` as-is. A negative window
+  // makes conformant clients refuse to sign, and a non-integer is rejected by
+  // strict validators; both surface as unexplained payment failures.
+  const maxTimeoutSeconds = assertTimeoutSeconds(
     input.maxTimeoutSeconds ??
-    parseTimeout(env.X402_MAX_TIMEOUT_SECONDS) ??
-    DEFAULT_MAX_TIMEOUT_SECONDS;
+      parseTimeout(env.X402_MAX_TIMEOUT_SECONDS) ??
+      DEFAULT_MAX_TIMEOUT_SECONDS,
+    "maxTimeoutSeconds",
+  );
 
   const facilitatorTimeoutMs = resolveFacilitatorTimeout(input, env);
   const facilitatorHeaders = resolveFacilitatorHeaders(input, env);
@@ -304,15 +312,20 @@ function resolvePayTo(
 /**
  * Map a `X402_PAY_TO_<SUFFIX>` suffix back onto a configured network.
  *
- * The suffix cannot contain `:` on most shells, so `eip155_84532` is accepted as
- * well as the literal id.
+ * Three spellings are accepted, because environment variables cannot contain the
+ * `:` in a CAIP-2 id and people write the short form:
  *
- * `configured` is the network list the caller actually resolved, not the one in
- * the environment. Reading only env vars meant that with
- * `networks: ["eip155:8453", "eip155:84532"]` in code plus
- * `X402_PAY_TO_EIP155_8453`, the per-network address was silently dropped and
- * the shared `X402_PAY_TO` was used for every chain — payments landing in the
- * wrong wallet, with no error anywhere.
+ * - the literal id, when the shell allows it;
+ * - the id with `_` for `:`, e.g. `EIP155_84532`;
+ * - the namespace alone, e.g. `SOLANA`, which applies to the first configured
+ *   network of that namespace.
+ *
+ * The namespace form is what `X402_PAY_TO_SOLANA` uses, and it was lost when this
+ * resolver started reading the configured network list instead of the
+ * environment: `envKey("solana:EtWTR…")` is `SOLANA_ETWTR…`, so a bare `SOLANA`
+ * suffix matched nothing and the shared EVM address was applied to Solana —
+ * rejected as "not a base58 public key", with the per-network variable silently
+ * ignored.
  *
  * @param suffix - The part after `X402_PAY_TO_`
  * @param configured - Networks this configuration resolved to
@@ -323,9 +336,18 @@ function networkFromEnvSuffix(
   configured: string[],
 ): string | undefined {
   const normalised = suffix.replace(/_/g, ":");
-  return configured.find(
+  const exact = configured.find(
     network => network === suffix || network === normalised || envKey(network) === suffix,
   );
+  if (exact) return exact;
+
+  // Namespace-only suffix: match the first network in that namespace.
+  const wanted = suffix.toLowerCase();
+  return configured.find(network => {
+    const separator = network.indexOf(":");
+    const namespace = separator === -1 ? network : network.slice(0, separator);
+    return namespace.toLowerCase() === wanted;
+  });
 }
 
 /** Environment-safe form of a network id, e.g. `eip155:84532` → `eip155_84532`. */
@@ -486,10 +508,35 @@ function resolveNetworks(
   input: ResolveConfigInput,
   env: Record<string, string | undefined>,
 ): string[] {
-  const explicit = input.networks ?? parseNetworkList(env.X402_NETWORKS);
-  const single = pickString(input.network, env.X402_NETWORK);
+  // Precedence, most to least specific:
+  //
+  //   1. `networks` option        — the caller listed exactly what they want
+  //   2. `X402_NETWORKS`          — the deployment listed exactly what it wants
+  //   3. `network` option         — one chain, so it cannot contradict a list
+  //   4. `X402_NETWORK`           — same, from the environment
+  //
+  // A *list* beats a *single* value regardless of which side it comes from,
+  // because a list is a deliberate statement about several chains and a single
+  // value is the older, narrower spelling. Treating `network` as a peer of
+  // `X402_NETWORKS` broke multi-network deployments whose code pinned one chain
+  // while the environment listed several — `X402_PAY_TO_<network>` addresses then
+  // had no network to attach to and were silently dropped.
+  const explicitList = input.networks;
+  const envList = parseNetworkList(env.X402_NETWORKS);
+  const explicitSingle = pickString(input.network);
+  const envSingle = pickString(env.X402_NETWORK);
 
-  const source = explicit && explicit.length > 0 ? explicit : single ? [single] : [];
+  const source =
+    explicitList && explicitList.length > 0
+      ? explicitList
+      : envList && envList.length > 0
+        ? envList
+        : explicitSingle
+          ? [explicitSingle]
+          : envSingle
+            ? [envSingle]
+            : [];
+
   const seen = new Set<string>();
   const networks: string[] = [];
   for (const raw of source) {
@@ -498,6 +545,23 @@ function resolveNetworks(
     seen.add(network);
     networks.push(network);
   }
+
+  // When a list wins over a single value, say so if they disagree. Silence here
+  // is how a caller who wrote `network: 'eip155:1'` alongside `networks:
+  // ['eip155:8453']` came to believe mainnet was for sale. A warning names the
+  // mismatch without changing which value applies — the documented precedence
+  // still holds, and breaking it would be a worse surprise than a log line.
+  const losingSingle =
+    (explicitList && explicitList.length > 0) || (envList && envList.length > 0)
+      ? explicitSingle ?? envSingle
+      : undefined;
+  if (losingSingle && !seen.has(losingSingle)) {
+    process.emitWarning(
+      `[x402-lens] network "${losingSingle}" is not in the configured network list ${JSON.stringify(networks)}. A network list wins over a single network, so "${losingSingle}" will not be advertised. Add it to the list, or remove the single value.`,
+      "X402LensConfig",
+    );
+  }
+
   return networks;
 }
 
@@ -613,9 +677,47 @@ function assertSchemesAreValid(routes: RoutePrice[], networks: string[]): void {
   }
 }
 
+/**
+ * Validate a settlement window before it reaches the wire.
+ *
+ * @param value - Candidate value
+ * @param at - Field name for the message
+ * @returns The value, guaranteed to be a positive integer
+ * @throws {ConfigError} When it is not
+ */
+function assertTimeoutSeconds(value: number, at: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ConfigError(
+      at,
+      `${at} must be a positive integer number of seconds, got ${JSON.stringify(value)}. A negative or fractional window is advertised in accepts[] as-is, and conformant clients refuse to sign against it — the buyer sees an unexplained failure rather than a config error.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse an integer environment value, rejecting trailing garbage.
+ *
+ * `Number.parseInt` truncates: `"1e3"` became `1`, `"60abc"` became `60`, and
+ * `"9000ms"` became `9000`. A typo in a timeout therefore produced a wildly
+ * different value instead of a startup error — `1e3` in
+ * `X402_FACILITATOR_TIMEOUT_MS` means a 1 ms deadline, so every facilitator call
+ * times out and the cause is invisible.
+ *
+ * @param raw - Environment string
+ * @returns Parsed value, or NaN when the string is not a plain integer
+ */
+function parseStrictInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) return Number.NaN;
+  return Number.parseInt(trimmed, 10);
+}
+
 function parseTimeout(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
-  const parsed = Number.parseInt(raw, 10);
+  const parsed = parseStrictInt(raw);
+  if (parsed === undefined) return undefined;
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new ConfigError(
       "maxTimeoutSeconds",
@@ -624,6 +726,16 @@ function parseTimeout(raw: string | undefined): number | undefined {
   }
   return parsed;
 }
+
+/**
+ * Largest delay `AbortSignal.timeout` / `setTimeout` accepts.
+ *
+ * `HTTPFacilitatorClient` enforces this with a `RangeError` from its
+ * constructor, which `resolveConfig` cannot catch — the process crashes at
+ * startup with no `ConfigError` field naming the offending setting. Catching it
+ * here turns a stack trace into a message.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 function resolveFacilitatorTimeout(
   input: ResolveConfigInput,
@@ -637,13 +749,19 @@ function resolveFacilitatorTimeout(
       `facilitatorTimeoutMs must be a positive integer, got ${String(input.facilitatorTimeoutMs ?? env.X402_FACILITATOR_TIMEOUT_MS)}.`,
     );
   }
+  if (raw > MAX_TIMEOUT_MS) {
+    throw new ConfigError(
+      "facilitatorTimeoutMs",
+      `facilitatorTimeoutMs must be at most ${MAX_TIMEOUT_MS} (about 24.8 days), got ${String(raw)}. The SDK enforces this limit when the facilitator client is constructed, so a larger value crashes at startup instead of failing here with a message naming the field.`,
+    );
+  }
   return raw;
 }
 
 function parsePositiveInt(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : NaN;
+  const parsed = parseStrictInt(raw);
+  return parsed === undefined ? undefined : parsed;
 }
 
 const FACILITATOR_HEADER_PATHS = ["verify", "settle", "supported", "bazaar"] as const;

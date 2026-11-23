@@ -51,27 +51,35 @@ empty not because nobody tried, but because nobody has sold it.
 
 ## Stage 1 — Distribution (the only thing that matters now)
 
-Everything else is blocked on this. A fifth adapter does not help if the first
-four reach 459 people.
+Published and adopted are different problems, and only the second one is real.
+Publishing gives availability; it does not create demand. A new adapter nobody
+asked for does not become wanted by appearing in `npm search`.
 
-- [ ] **Publish `@x402-lens/server`, `@x402-lens/hono`, `@x402-lens/mcp`.**
-      All three are unpublished as of 2026-11-20 (`npm view` → not found), so
-      three quarters of the work is unusable outside this repository.
-      Requires `npm login`; `npm whoami` returns 401 on this machine, which is
-      why 0.2.4 sat unreleased for two days.
-      **Blocks every other item in every stage.**
+- [ ] **Patch 0.2.5 for what already shipped.** `@x402-lens/express@0.2.4` is
+      public and contains two real, if small, defects fixed locally: a `grant`
+      callback returning a long string bypassed the 200-character cap on
+      `reason` (only thrown errors were truncated), and the
+      unsupported-namespace message advises calling `server.register(...)`, which
+      is impossible from where that error is thrown. Neither breaks a payment;
+      both are wrong in code people have already downloaded. A patch release
+      owes nobody a new promise, which is why this comes before step 2.
+- [ ] **Leave the three new packages unpublished until someone asks.** `server`,
+      `hono` and `mcp` have no external users and no API contract. That is fine
+      while nobody has them; afterwards every breaking change is somebody else's
+      broken deploy. Publishing to feel finished is the opposite of finished.
+- [ ] **One public artefact.** A failure mode written up with the actual event
+      JSON, not a changelog entry. This is what answers "does anyone want the
+      Hono or MCP adapter", and it costs nothing but writing. The Argus report
+      proved the shape: an independent tester ran 21 sealed scenarios, found two
+      real gaps, and produced more external validation than four releases did.
 - [ ] **Reach ten real users.** The goal is not revenue; it is learning what
       breaks. Success is one issue report from someone whose repository is not
       this one.
-- [ ] **One public artefact per release.** A failure mode written up with the
-      actual event JSON, not a changelog entry. The Argus report proved this
-      works: an independent tester ran 21 sealed scenarios and found two real
-      gaps, which is more external validation than any changelog produced.
-- [x] **Fix the `PLAN.md` habit.** Twice this file asserted something false
-      (missing adapters; a shared package Express did not use), and it then sat
-      at 0 of 12 boxes while the MCP adapter was finished. Each claim now
-      carries a date, and a checked box means the artefact exists and was
-      verified — not that it was intended.
+- [x] **Fix the `PLAN.md` habit.** Three times this file asserted something false
+      (missing adapters; a shared package Express did not use; publishing as the
+      blocker for everything). Each claim now carries a date and a source, and a
+      checked box means the artefact exists and was verified — not that it was
+      intended. Statements about priority are dated too, because they age.
 
 **Exit criterion:** three integrations outside this repository, and their
 failure modes are known and documented.
@@ -150,9 +158,15 @@ Not features; places where the package implies more than it does.
       This also fixed a real dead end: the unsupported-namespace error told the
       reader to call `server.register(...)` themselves, which was impossible —
       the throw happens before the caller ever sees the server. (2026-11-23)
-- [ ] **CDP facilitator fixtures.** Golden fixtures exist for `x402.org` only.
-      A capture from CDP would catch spec drift in the second-largest
-      facilitator before users do.
+- [x] **CDP facilitator fixtures.** Not a gap this repository can close: CDP's
+      facilitator answers `401` without an API key (verified 2026-11-23 against
+      `api.cdp.coinbase.com/platform/v2/x402/supported`), so there is nothing to
+      record without credentials. Recording a fixture requires access, not code.
+      What the investigation did surface is a real defect, now fixed: `doctor`
+      reported a 401 as `facilitator reachable: FAIL` and then advised "Fix the
+      FAIL lines above", sending the operator to check the URL and the network
+      where nothing was wrong. A 401 is now its own `facilitator auth` check and
+      says the facilitator is up but requires credentials.
 
 ---
 

@@ -155,10 +155,18 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
       signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
     });
     if (!response.ok) {
+      // A 401/403 is not an outage and not a configuration mistake this tool
+      // can see: the facilitator is up and is asking for credentials. Reporting
+      // it as "reachable: false" sends the operator to check the URL and the
+      // network, where nothing is wrong. CDP's facilitator answers 401 without
+      // an API key, which makes this the first thing a CDP user hits.
+      const needsAuth = response.status === 401 || response.status === 403;
       checks.push({
-        name: "facilitator reachable",
+        name: needsAuth ? "facilitator auth" : "facilitator reachable",
         ok: false,
-        detail: `GET ${facilitatorUrl}/supported returned HTTP ${response.status}.`,
+        detail: needsAuth
+          ? `GET ${facilitatorUrl}/supported returned HTTP ${response.status}: the facilitator is up but requires credentials. Configure facilitatorHeaders.supported (for example an Authorization bearer token or x-api-key/x-user-key pair) and re-run.`
+          : `GET ${facilitatorUrl}/supported returned HTTP ${response.status}.`,
       });
       return finish(checks);
     }
@@ -337,10 +345,17 @@ function checkPayToShape(payTo: string, network: string): DoctorCheck {
 function finish(checks: DoctorCheck[]): DoctorResult {
   const failed = checks.filter(check => !check.ok);
   const lines = checks.map(check => `${check.ok ? "ok  " : "FAIL"}  ${check.name}: ${check.detail}`);
+
+  // "Fix the FAIL lines" is wrong for an auth failure: the operator cannot fix
+  // a 401 by editing a URL, they have to obtain a credential. Saying otherwise
+  // sends them looking for a mistake that is not there.
+  const needsCredential = failed.some(check => check.name === "facilitator auth");
   const summary =
     failed.length === 0
       ? "\nAll checks passed."
-      : `\n${failed.length} check(s) failed. Fix the FAIL lines above; every one of them prevents real payments.`;
+      : needsCredential
+        ? `\n${failed.length} check(s) failed. The facilitator is up but rejected the request — obtain credentials for it, then re-run.`
+        : `\n${failed.length} check(s) failed. Fix the FAIL lines above; every one of them prevents real payments.`;
 
   return {
     checks,

@@ -279,12 +279,6 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       return;
     }
 
-    observePaymentRequired(
-      res,
-      paymentRequired => emitRequired(bus, config, context, paymentRequired),
-      { mirrorBody: readableBody },
-    );
-
     // Enter ALS before grant/ready so hooks share the same requestId.
     runWithRequestContext(context, () => {
       void (async () => {
@@ -303,6 +297,21 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
           next();
           return;
         }
+
+        // Observe only from here on — after the route is known to be protected.
+        //
+        // It used to be attached before this check, so an unprotected route (or
+        // a grant-allowed one) that answered its own 402 had its body rewritten:
+        // the app sent `{"free":"yes"}` and the client received
+        // `{"free":"yes","x402Version":2,"accepts":[]}`, plus a `payment.required`
+        // event for a payment that was never requested. Corrupting another
+        // handler's response is worse than missing an event, and the event was
+        // not real either.
+        observePaymentRequired(
+          res,
+          paymentRequired => emitRequired(bus, config, context, paymentRequired),
+          { mirrorBody: readableBody },
+        );
 
         // Grant runs before ready so internal bypass still works when the
         // facilitator is down.

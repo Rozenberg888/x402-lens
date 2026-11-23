@@ -222,7 +222,9 @@ export function resolveConfig(input: ResolveConfigInput = {}): LensConfig {
 
   const facilitatorUrl = pickString(input.facilitatorUrl, env.X402_FACILITATOR_URL);
   const networks = resolveNetworks(input, env);
-  const payTo = resolvePayTo(input, env);
+  // Pass the resolved list, not the environment: with networks supplied in code,
+  // `X402_PAY_TO_<network>` has to resolve against those or it is dropped.
+  const payTo = resolvePayTo(input, env, networks);
 
   if (!facilitatorUrl) {
     throw new ConfigError(
@@ -283,6 +285,7 @@ export function resolveConfig(input: ResolveConfigInput = {}): LensConfig {
 function resolvePayTo(
   input: ResolveConfigInput,
   env: Record<string, string | undefined>,
+  networks: string[],
 ): PayToInput | undefined {
   if (typeof input.payTo === "string" || input.payTo) return input.payTo;
 
@@ -290,7 +293,7 @@ function resolvePayTo(
   const perNetwork: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     if (!key.startsWith("X402_PAY_TO_") || !value) continue;
-    const network = networkFromEnvSuffix(key.slice("X402_PAY_TO_".length), env);
+    const network = networkFromEnvSuffix(key.slice("X402_PAY_TO_".length), networks);
     if (network) perNetwork[network] = value.trim();
   }
 
@@ -303,16 +306,24 @@ function resolvePayTo(
  *
  * The suffix cannot contain `:` on most shells, so `eip155_84532` is accepted as
  * well as the literal id.
+ *
+ * `configured` is the network list the caller actually resolved, not the one in
+ * the environment. Reading only env vars meant that with
+ * `networks: ["eip155:8453", "eip155:84532"]` in code plus
+ * `X402_PAY_TO_EIP155_8453`, the per-network address was silently dropped and
+ * the shared `X402_PAY_TO` was used for every chain — payments landing in the
+ * wrong wallet, with no error anywhere.
+ *
+ * @param suffix - The part after `X402_PAY_TO_`
+ * @param configured - Networks this configuration resolved to
+ * @returns The matching network id, if any
  */
 function networkFromEnvSuffix(
   suffix: string,
-  env: Record<string, string | undefined>,
+  configured: string[],
 ): string | undefined {
-  const candidates = parseNetworkList(env.X402_NETWORKS) ?? [
-    pickString(env.X402_NETWORK) ?? "",
-  ];
   const normalised = suffix.replace(/_/g, ":");
-  return candidates.find(
+  return configured.find(
     network => network === suffix || network === normalised || envKey(network) === suffix,
   );
 }
@@ -836,7 +847,7 @@ function normaliseRouteArray(raw: RouteInput[]): RoutePrice[] {
       };
     }
     const direct = entry as RoutePrice;
-    const method = (direct.method ?? "GET").toUpperCase();
+    const method = assertMethod(direct.method ?? "GET", `routes[${index}]`);
     if (typeof direct.path !== "string" || direct.path.trim().length === 0) {
       throw new ConfigError(
         `routes[${index}]`,
@@ -964,6 +975,45 @@ function metadata(entry: Partial<RoutePrice>): Partial<RoutePrice> {
   return result;
 }
 
+/**
+ * HTTP methods a route may declare.
+ *
+ * `*` means any, which the adapters honour. Anything else is refused: a typo
+ * like `POX /weather` was accepted and produced a lens that protected nothing.
+ * The route key simply never matched a request, so the handler ran unpaid with
+ * no event and no 402 — a silent revenue loss, and the hardest kind of defect to
+ * notice because nothing looks broken.
+ */
+const KNOWN_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+  "*",
+]);
+
+/**
+ * Validate a route method and normalise its case.
+ *
+ * @param raw - Method as written by the operator
+ * @param at - Where it came from, for the error message
+ * @returns The uppercase method
+ * @throws {ConfigError} When the token is not an HTTP method this package routes
+ */
+function assertMethod(raw: string, at: string): string {
+  const method = raw.trim().toUpperCase();
+  if (!KNOWN_METHODS.has(method)) {
+    throw new ConfigError(
+      at,
+      `${at} declares method "${raw}", which is not an HTTP method. Use GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, or "*" for any. A route with an unrecognised method never matches a request, so the handler runs unpaid and no payment event is emitted.`,
+    );
+  }
+  return method;
+}
+
 function splitRoute(route: string, index: number): { method: string; path: string } {
   // Trim first, but remember that `"GET "` is a method with no path, not a path
   // called "GET": trimming away the separating space silently turned one into
@@ -979,7 +1029,7 @@ function splitRoute(route: string, index: number): { method: string; path: strin
     return { method: "GET", path: trimmed };
   }
 
-  const method = trimmed.slice(0, spaceIndex).toUpperCase();
+  const method = assertMethod(trimmed.slice(0, spaceIndex), `routes[${index}]`);
   const path = trimmed.slice(spaceIndex + 1).trim();
   if (!path) {
     throw new ConfigError(

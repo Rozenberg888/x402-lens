@@ -312,32 +312,36 @@ export interface CustomSchemeRegistration {
 /**
  * Register the schemes this package supports on one network.
  *
- * `exact` is always registered; the others only when a route asks for them, so
- * the challenge for an all-`exact` deployment stays byte-identical.
+ * `exact` is registered unless the caller supplied their own; the others only
+ * when a route asks for them, so the challenge for an all-`exact` deployment
+ * stays byte-identical.
  *
  * @param server - Resource server to register on
  * @param network - CAIP-2 network, already validated
  * @param schemes - Schemes any route on this network needs
+ * @param options - `skipExact` when the caller registered their own `exact`
  */
 export function registerScheme(
   server: x402ResourceServer,
   network: string,
   schemes: ReadonlySet<PaymentScheme>,
+  options: { skipExact?: boolean } = {},
 ): void {
   const separator = network.indexOf(":");
   const namespace = separator === -1 ? network : network.slice(0, separator);
   // `Network` is a template-literal type; the value was validated as CAIP-2 by
   // `resolveConfig` before reaching here.
   const caip2 = network as `${string}:${string}`;
+  const skipExact = options.skipExact === true;
 
   switch (namespace) {
     case "eip155": {
-      server.register(caip2, new ExactEvmScheme());
+      if (!skipExact) server.register(caip2, new ExactEvmScheme());
       if (schemes.has("upto")) server.register(caip2, new UptoEvmScheme());
       return;
     }
     case "solana": {
-      server.register(caip2, new ExactSvmScheme());
+      if (!skipExact) server.register(caip2, new ExactSvmScheme());
       if (schemes.has("upto")) server.register(caip2, new UptoSvmScheme({}));
       return;
     }
@@ -732,14 +736,39 @@ export function buildServers(config: LensConfig, options: LensCommonOptions): Le
   }
 
   for (const network of config.networks) {
-    // Skip only networks the caller fully covered. If they registered one
-    // scheme for a network, the built-in `exact` is still worth adding: the
-    // common case should not require a registration list.
+    // Namespaces this package registers itself: eip155 and solana. For any other
+    // network, a caller-supplied scheme is the only way it can work at all, so
+    // `registerScheme` must not be called for it — it would throw "No scheme for
+    // namespace" even though the caller covered the network themselves.
+    const namespace = network.slice(0, Math.max(network.indexOf(":"), 0));
+    const shippedHere = namespace === "eip155" || namespace === "solana";
+
+    // A caller-supplied `exact` replaces the built-in one, but it must not
+    // suppress the other schemes this package registers for that network.
+    //
+    // The previous version did `continue` here, which skipped `registerScheme`
+    // entirely — and that is the only place `upto` is registered. Supplying a
+    // custom `exact` on a network that also had an `upto` route therefore left
+    // `upto` unregistered and `ready` rejected with
+    // `No scheme implementation registered for "upto"`, so the server never
+    // started. The comment two lines above already said the built-in exact was
+    // "still worth adding"; the code skipped more than exact.
     const suppliedExact = options.extraSchemes?.some(
       custom => custom.network === network && custom.scheme === "exact",
     );
-    if (customNetworks.has(network) && suppliedExact) continue;
-    registerScheme(server, network, schemes);
+
+    if (!shippedHere) {
+      // Nothing this package can add. The caller's registration is the whole
+      // answer; reaching the switch would throw.
+      if (!customNetworks.has(network)) {
+        // No scheme at all for this network: the throw below produces the
+        // actionable message naming `extraSchemes`, which is the point.
+        registerScheme(server, network, schemes, { skipExact: suppliedExact === true });
+      }
+      continue;
+    }
+
+    registerScheme(server, network, schemes, { skipExact: suppliedExact === true });
   }
 
   const routes = options.routesConfig ?? (toRoutesConfig(config) as unknown as RoutesConfig);

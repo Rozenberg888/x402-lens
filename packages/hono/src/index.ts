@@ -19,6 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import { basePath } from "hono/route";
 import {
   ConfigError,
   PrometheusRegistry,
@@ -237,10 +238,18 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       // sends, and a test asserts it.
       let required: boolean;
       try {
+        // The path the SDK matches on is relative to the sub-app it is mounted
+        // in. `c.req.path` still carries the mount prefix, so with
+        // `app.route('/acme', sub)` a route keyed `GET /weather` never matched
+        // `GET /acme/weather` — every paid route inside a sub-app answered 200
+        // with its data, no challenge, no event. The SDK's own adapter subtracts
+        // `basePath(c)`; this one did not, which made the documented sub-app
+        // mounting pattern a silent revenue loss.
+        const routePath = pathWithinApp(c);
         required = httpServer.requiresPayment({
           adapter,
-          path: c.req.path,
-          decodedPath: decodedRoutePath(c.req.path),
+          path: routePath,
+          decodedPath: decodedRoutePath(routePath),
           method: c.req.method,
           paymentHeader,
         });
@@ -338,6 +347,38 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       return bus.close();
     },
   };
+}
+
+/**
+ * The request path relative to the app the middleware is mounted in.
+ *
+ * Hono keeps the full request path and exposes the mount prefix separately, so a
+ * route key has to be matched against the part after the prefix. Without this,
+ * `app.route('/acme', sub)` + `sub.use('*', lens.middleware)` with a
+ * `GET /weather` route never matched `GET /acme/weather`: the lens decided the
+ * route was unprotected, called `next()`, and the handler returned its data for
+ * free — no challenge, no event, no error. That is the worst failure shape,
+ * because nothing anywhere reports it.
+ *
+ * Mirrors `@x402/hono`'s own path handling: strip the base path when the request
+ * is under it, leave the path alone otherwise, and never throw — a base-path
+ * lookup failure must not take down a payment path.
+ *
+ * @param c - Hono context for the request
+ * @returns Path relative to the mounted app
+ */
+function pathWithinApp(c: Context): string {
+  const path = c.req.path;
+  let prefix: string;
+  try {
+    prefix = basePath(c);
+  } catch {
+    return path;
+  }
+  if (!prefix || prefix === "/" || !path.startsWith(prefix)) return path;
+  if (path === prefix) return "";
+  // Only treat the prefix as a boundary: `/acme` must not strip `/acmefoo`.
+  return path[prefix.length] === "/" ? path.slice(prefix.length) : path;
 }
 
 /**

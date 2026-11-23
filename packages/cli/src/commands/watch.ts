@@ -231,6 +231,22 @@ export async function checkEndpoint(
   const challenge = inspected.paymentRequired;
   const drift = diffChallenges(endpoint, previous, challenge);
 
+  // A header that exists but cannot be decoded is a different regression from a
+  // paywall that disappeared, and the distinction changes the fix: a corrupt
+  // header means the server is still trying to charge, a missing one means it
+  // stopped. `challenge_unreadable` was declared in the drift union and never
+  // constructed, so this case was reported as `paywall_gone` — a materially
+  // wrong claim ("clients will be charged nothing") about a server whose problem
+  // is one bad header away from working.
+  if (inspected.headerUndecodable) {
+    drift.push({
+      kind: "challenge_unreadable",
+      endpoint,
+      detail:
+        "PAYMENT-REQUIRED is present but cannot be decoded, so no client can read the price. The paywall is attempting to charge — check what the server is putting in that header.",
+    });
+  }
+
   // CORS is deliberately not part of the drift check.
   //
   // A paywall can be correctly configured for server-to-server clients and have

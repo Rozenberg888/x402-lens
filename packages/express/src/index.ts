@@ -61,6 +61,7 @@ import {
   mergeCorsHeaders,
   normalisePassedConfig,
   normaliseRouteInput,
+  pathMatchesPattern,
   runWithRequestContext,
   safeCall,
   type CustomSchemeRegistration,
@@ -294,6 +295,25 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 
         // Unprotected routes must not depend on facilitator readiness (health checks).
         if (!httpServer.requiresPayment(httpContext)) {
+          // A mounted router is the one place this can go wrong silently.
+          //
+          // Inside `app.use('/acme', router)` Express strips the prefix, so
+          // `req.path` is `/weather` and the route key must be written without
+          // `/acme`. A key written with the prefix — the obvious guess — matches
+          // nothing here while the app's own `router.get('/weather')` still
+          // serves it, so the handler runs unpaid and answers 200. Measured:
+          // key `/acme/weather` returned 200 with the protected payload, and no
+          // event, no 402, no error anywhere.
+          //
+          // Detecting it costs one comparison: if the mounted path would have
+          // matched, the key is wrong and saying so beats paying for it.
+          const mountedPath = `${req.baseUrl ?? ""}${req.path}`;
+          if (mountedPath !== req.path && matchesConfiguredRoute(config, req.method, mountedPath)) {
+            process.emitWarning(
+              `[x402-lens] route key "${req.method} ${mountedPath}" includes the mount prefix. Inside a mounted router Express reports the path without it, so this request was served unpaid. Write the key as "${req.method} ${req.path}".`,
+              "X402LensConfig",
+            );
+          }
           next();
           return;
         }
@@ -405,12 +425,32 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
 }
 
 /**
+ * Whether a configured route covers this method and path.
+ *
+ * Used only to detect a route key written with the mount prefix. It reuses the
+ * same matcher `grant` uses, so "did the operator mean this route" is answered
+ * the same way in both places.
+ *
+ * @param config - Resolved configuration
+ * @param method - HTTP method of the request
+ * @param path - Path including the mount prefix
+ * @returns True when some configured route covers it
+ */
+function matchesConfiguredRoute(config: LensConfig, method: string, path: string): boolean {
+  return config.routes.some(
+    route =>
+      (route.method === method || route.method === "*") &&
+      (route.path === path || pathMatchesPattern(route.path, path)),
+  );
+}
+
+/**
  * Merge our headers into whatever the response already has, so an app's own
  * CORS layer keeps working.
  *
- * List headers (`Expose` / `Allow-Headers` / `Methods`) are unioned. Singleton
- * CORS headers (`Access-Control-Allow-Origin`, `Vary`) replace — comma-joining
- * ACAO produces a value browsers reject.
+ * `Access-Control-Allow-Origin` is replaced, never joined — a comma-joined ACAO
+ * is a value browsers reject. `Vary` is a list and is unioned like the others, so
+ * an app's existing `Accept-Encoding` survives.
  */
 function applyCorsHeaders(res: Response, headers: Record<string, string>): void {
   const merged = mergeCorsHeaders(

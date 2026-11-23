@@ -442,12 +442,33 @@ export async function main(argv: string[]): Promise<number> {
     }
   } catch (error) {
     if (error instanceof InputError || error instanceof AddError) {
-      process.stderr.write(`${error.message}\n`);
+      writeError(error.message, 2, asJson);
       return 2;
     }
-    process.stderr.write(`${(error as Error).message}\n`);
+    writeError((error as Error).message, 1, asJson);
     return 1;
   }
+}
+
+/**
+ * Report an error, honouring `--json`.
+ *
+ * `--json` is documented as machine-readable output, but only some paths honoured
+ * it: `inspect` had a JSON-aware catch, while `explain` reading a missing file and
+ * `add` failing to parse a source file wrote a human sentence to stderr and left
+ * stdout empty. A machine reader cannot tell that apart from success or from a
+ * crash — which makes `--json` unreliable in exactly the situation it exists for.
+ *
+ * @param message - Already-human-readable error text
+ * @param code - Exit code to report alongside it
+ * @param asJson - Whether `--json` was requested
+ */
+function writeError(message: string, code: number, asJson: boolean): void {
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ error: message, exitCode: code }, null, 2)}\n`);
+    return;
+  }
+  process.stderr.write(`${message}\n`);
 }
 
 /**

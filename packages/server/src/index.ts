@@ -188,7 +188,15 @@ export function mergeCorsHeaders(
   existing: (name: string) => string | undefined,
   headers: Record<string, string>,
 ): Record<string, string> {
-  const replace = new Set(["access-control-allow-origin", "vary"]);
+  // Only `Access-Control-Allow-Origin` is a true singleton: a comma-joined value
+  // is rejected by browsers. `Vary` is a *list* header and must be unioned.
+  //
+  // Treating `Vary` as a singleton dropped what the app had already set: merging
+  // `Vary: Accept-Encoding, Origin` with the lens's `Vary: Origin` produced
+  // `Vary: Origin`, so a cache in front of the app could serve a gzipped body to
+  // a client that never asked for one, or the reverse. That is a correctness bug
+  // in the response, not just a header detail.
+  const replace = new Set(["access-control-allow-origin"]);
   const merged: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const current = existing(name);
@@ -550,19 +558,70 @@ export function matchRouteConfig(
   return candidates.find(route => pathMatchesPattern(route.path, path));
 }
 
-/** Match `/users/:id` and `/files/*` style patterns against a request path. */
+/**
+ * Match an Express-style route pattern against a request path.
+ *
+ * The rules follow what the SDK's own routing accepts, because a `grant` callback
+ * receives this match and a disagreement makes the callback see no config on a
+ * path the paywall *does* protect:
+ *
+ * - `:param` matches exactly one non-empty segment. The empty check matters:
+ *   `/users/:id` matching `/users/` would hand a grant callback a config for a
+ *   path with no id.
+ * - `*` matches one **or more** remaining segments, so `/api/*` covers
+ *   `/api/a/b`. The previous version required equal segment counts, so a
+ *   wildcard route matched only one level deep — `GET /api/a/b` was correctly
+ *   `402` by the SDK while `matchRouteConfig` returned `undefined`.
+ *
+ * @param pattern - Route pattern such as `/users/:id` or `/files/*`
+ * @param path - Request path
+ * @returns Whether the pattern covers the path
+ */
 export function pathMatchesPattern(pattern: string, path: string): boolean {
   if (pattern === path) return true;
   const patternParts = pattern.split("/");
   const pathParts = path.split("/");
-  if (patternParts.length !== pathParts.length) return false;
+
   for (let index = 0; index < patternParts.length; index += 1) {
     const expected = patternParts[index] ?? "";
-    const actual = pathParts[index] ?? "";
-    if (expected.startsWith(":") || expected === "*") continue;
+
+    if (expected === "*") {
+      // A trailing `*` covers the remaining segments, but needs at least one:
+      // `/api/*` means "something under /api", not `/api` itself. Treating zero
+      // as a match would hand a grant callback the wildcard route's config for
+      // the bare prefix, which is a different resource.
+      const isLast = index === patternParts.length - 1;
+      if (isLast) return index < pathParts.length;
+      // A `*` in the middle matches as few segments as needed, so fall back to
+      // matching the rest of the pattern against the rest of the path.
+      for (let consumed = index + 1; consumed <= pathParts.length; consumed += 1) {
+        if (
+          pathMatchesPattern(
+            patternParts.slice(index + 1).join("/"),
+            pathParts.slice(consumed).join("/"),
+          )
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    const actual = pathParts[index];
+    // No segment left: the pattern is longer than the path.
+    if (actual === undefined) return false;
+
+    if (expected.startsWith(":")) {
+      // A parameter needs something to bind to.
+      if (actual.length === 0) return false;
+      continue;
+    }
     if (expected !== actual) return false;
   }
-  return true;
+
+  // Every pattern segment matched; the path must not have extra segments unless a
+  // `*` already consumed them (handled above).
+  return patternParts.length === pathParts.length;
 }
 
 /**

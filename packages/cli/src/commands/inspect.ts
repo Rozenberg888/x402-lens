@@ -27,6 +27,15 @@ export interface InspectResult {
   status: number;
   paymentRequired?: WirePaymentRequired;
   headerPresent: boolean;
+  /**
+   * The header was present but could not be decoded, and the body did not supply
+   * a challenge either.
+   *
+   * Distinct from "no challenge at all": a corrupt header is a regression in a
+   * paywall that used to work, while a missing one means the route was never
+   * paid. `watch` reports them differently for that reason.
+   */
+  headerUndecodable: boolean;
   decodedFromBody: boolean;
   conformance: ReturnType<typeof validatePaymentRequired>;
   cors: ReturnType<typeof checkCors>;
@@ -59,6 +68,7 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
   let paymentRequired: WirePaymentRequired | undefined;
   let decodedFromBody = false;
   let headerPresent = false;
+  let headerUndecodable = false;
 
   if (headerValue) {
     headerPresent = true;
@@ -66,6 +76,7 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
       paymentRequired = decodePaymentRequiredHeader(headerValue) as unknown as WirePaymentRequired;
     } catch {
       // Fall through to the body, which we mirror there on purpose.
+      headerUndecodable = true;
     }
   }
 
@@ -189,6 +200,9 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
     status: response.status,
     ...(paymentRequired ? { paymentRequired } : {}),
     headerPresent,
+    // Only when the header existed, failed to decode, and the body did not
+    // rescue it — otherwise a body-mirrored challenge would be mislabelled.
+    headerUndecodable: headerUndecodable && paymentRequired === undefined,
     decodedFromBody,
     conformance,
     cors,

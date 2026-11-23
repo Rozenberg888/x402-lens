@@ -169,9 +169,18 @@ describe("mergeCorsHeaders", () => {
     expect(merged["Access-Control-Allow-Origin"]).not.toContain(",");
   });
 
-  it("replaces Vary rather than joining it", () => {
-    const merged = mergeCorsHeaders(() => "Accept", { Vary: "Origin" });
-    expect(merged.Vary).toBe("Origin");
+  it("unions Vary instead of replacing it", () => {
+    // `Vary` is a list header. Treating it as a singleton dropped what the app
+    // had already set: merging `Vary: Accept-Encoding, Origin` with the lens's
+    // `Vary: Origin` produced `Vary: Origin`, so a cache could serve a gzipped
+    // body to a client that never asked for one. That is a correctness bug in
+    // the response, not just a header detail.
+    const merged = mergeCorsHeaders(() => "Accept-Encoding, Origin", { Vary: "Origin" });
+
+    expect(merged.Vary).toContain("Accept-Encoding");
+    expect(merged.Vary).toContain("Origin");
+    // And no duplicate, since `Origin` was in both.
+    expect(merged.Vary?.split("Origin").length).toBe(2);
   });
 });
 

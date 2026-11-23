@@ -356,8 +356,10 @@ function checkSolanaEnvelope({ paymentPayload }: DiagnosisInput): Finding[] {
   const bytes = Buffer.from(raw, "base64");
   // Minimal plausible size: one 64-byte signature plus a message header and at
   // least a fee payer and a program id. Anything smaller decoded from valid
-  // base64 cannot be a transaction, whatever it is.
-  const MIN_SIGNED_TRANSACTION_BYTES = 64 + 3 + 32 + 1;
+  // base64 cannot be a transaction, whatever it is. Stated as a named constant
+  // so the boundary is asserted in one place: a test pins 99 (rejected) and 100
+  // (accepted), which is what makes an off-by-one here fail loudly.
+  const MIN_SIGNED_TRANSACTION_BYTES = 100;
   if (bytes.length < MIN_SIGNED_TRANSACTION_BYTES) {
     findings.push(
       finding(

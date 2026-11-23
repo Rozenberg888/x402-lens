@@ -59,6 +59,101 @@ function payload(transaction: unknown): Record<string, unknown> {
   };
 }
 
+describe("solana: the size boundary", () => {
+  it("rejects 99 bytes and accepts 100", () => {
+    // The boundary is the whole rule. Testing 2 bytes and 400 bytes only proves
+    // "very short fails, long passes" — an off-by-one or a changed comparison
+    // would survive that.
+    const short = Buffer.alloc(99, 1).toString("base64");
+    const atLimit = Buffer.alloc(100, 1).toString("base64");
+
+    const shortFindings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: payload(short) as never,
+      now: Date.now(),
+    });
+    expect(shortFindings.some(item => item.code === "transaction_too_short")).toBe(true);
+
+    const limitFindings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: payload(atLimit) as never,
+      now: Date.now(),
+    });
+    // Exactly at the minimum is a transaction-shaped envelope; anything at or
+    // above it must pass, or a real payment of the smallest legal size is
+    // reported as broken.
+    expect(limitFindings.some(item => item.code === "transaction_too_short")).toBe(false);
+  });
+});
+
+describe("solana: base64 acceptance", () => {
+  it("accepts padded base64", () => {
+    // 5 bytes is not a multiple of 3, so every standard encoder emits one `=`.
+    const padded = Buffer.from("hello").toString("base64");
+    expect(padded).toContain("=");
+
+    const findings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: payload(padded) as never,
+      now: Date.now(),
+    });
+    // 5 bytes: too short, but the encoding itself must not be blamed.
+    expect(findings.some(item => item.code === "transaction_not_base64")).toBe(false);
+  });
+
+  it("accepts unpadded base64", () => {
+    // Stripping padding is legal and decodes identically. Requiring it would be
+    // a false "not base64" on a payload a client legitimately produced.
+    const unpadded = Buffer.alloc(100, 3).toString("base64").replace(/=+$/, "");
+
+    const findings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: payload(unpadded) as never,
+      now: Date.now(),
+    });
+    expect(findings.some(item => item.code === "transaction_not_base64")).toBe(false);
+  });
+
+  it("rejects a string that looks like base64 but does not round-trip", () => {
+    // Right alphabet, right length, wrong trailing bits: decoding it silently
+    // produces different bytes, so it is not a transaction anyone can verify.
+    // This is the case the round-trip exists for and the regex alone misses.
+    const notReallyBase64 = "A".repeat(100) + "B";
+
+    const findings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: payload(notReallyBase64) as never,
+      now: Date.now(),
+    });
+
+    // Either code is defensible — it is not valid base64, and it is short after
+    // a lossy decode — but silence is not: the client sent something the
+    // facilitator will reject with no explanation.
+    const named =
+      findings.some(item => item.code === "transaction_not_base64") ||
+      findings.some(item => item.code === "transaction_too_short");
+    expect(named).toBe(true);
+  });
+});
+
+describe("solana: missing payload", () => {
+  it("says nothing when the payload object is absent entirely", () => {
+    // A payload with no `payload` key is a different defect; reporting a
+    // transaction problem here would be a second finding for one mistake.
+    const findings = diagnose({
+      paymentRequired: challenge() as never,
+      paymentPayload: {
+        x402Version: 2,
+        accepted: { scheme: "exact", network: SVM, asset: MINT, payTo: PAY_TO, amount: "1000" },
+      } as never,
+      now: Date.now(),
+    });
+
+    expect(findings.some(item => item.code === "transaction_not_base64")).toBe(false);
+    expect(findings.some(item => item.code === "transaction_too_short")).toBe(false);
+  });
+});
+
 describe("solana: transaction encoding", () => {
   it("flags a transaction that is not base64", () => {
     const findings = diagnose({

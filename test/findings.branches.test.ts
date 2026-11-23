@@ -60,17 +60,72 @@ describe("findings: ordering", () => {
   });
 
   it("breaks severity ties by code, so the order is stable", () => {
+    // This input matters: `checkNetwork` runs before `checkAmount`, so the rules
+    // emit `network_not_offered` then `amount_not_atomic`. Sorted by code,
+    // `amount_not_atomic` must come first. Without the comparator the array
+    // stays in emission order and this fails — which is what makes the sort
+    // provable at all, since the rules happen to list errors before warnings.
     const findings = diagnose({
-      paymentRequired: challenge({ network: "not-a-network" }),
+      paymentRequired: {
+        x402Version: 2,
+        accepts: [
+          {
+            scheme: "exact",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+            amount: "1.5",
+            maxTimeoutSeconds: 60,
+          },
+        ],
+      } as never,
+      paymentPayload: {
+        x402Version: 2,
+        accepted: {
+          scheme: "exact",
+          network: "solana:Other",
+          asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          payTo: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+          amount: "1.5",
+        },
+      } as never,
       now: Date.now(),
     });
 
-    const sameRank = findings.filter(finding => finding.severity === "error");
-    if (sameRank.length < 2) return; // Nothing to order; the other test covers the sort.
+    const codes = findings.map(finding => finding.code);
+    // Both must be present, or the assertion below would pass on an empty list.
+    expect(codes).toContain("amount_not_atomic");
+    expect(codes).toContain("network_not_offered");
+    expect(codes.indexOf("amount_not_atomic")).toBeLessThan(
+      codes.indexOf("network_not_offered"),
+    );
+  });
 
-    const codes = sameRank.map(finding => finding.code);
-    const sorted = [...codes].sort((a, b) => a.localeCompare(b));
-    expect(codes).toEqual(sorted);
+  it("orders an error before a warning regardless of which rule emitted it", () => {
+    // `checkAmount` (error) runs before `checkEip712Domain` (warning), so this
+    // input cannot distinguish sorted from unsorted. It still pins the property
+    // a reader relies on: scanning top-down hits blockers first.
+    const findings = diagnose({
+      paymentRequired: {
+        x402Version: 2,
+        accepts: [
+          {
+            scheme: "exact",
+            network: "eip155:84532",
+            asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            payTo: "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            amount: "1.5",
+            maxTimeoutSeconds: 60,
+          },
+        ],
+      } as never,
+      now: Date.now(),
+    });
+
+    const severities = findings.map(finding => finding.severity);
+    expect(severities).toContain("error");
+    expect(severities).toContain("warn");
+    expect(severities.lastIndexOf("error")).toBeLessThan(severities.indexOf("warn"));
   });
 });
 

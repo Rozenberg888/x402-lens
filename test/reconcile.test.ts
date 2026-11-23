@@ -52,7 +52,10 @@ describe("reconcileTransaction", () => {
     });
 
     expect(result.status).toBe("pending");
-    expect(result.exitCode).toBe(1);
+    // 4, not 1: `pending` means "on chain, will confirm — a retry would pay
+    // twice", which is the opposite advice from `not_found`. Sharing exit 1 left
+    // a script unable to tell them apart without parsing --json.
+    expect(result.exitCode).toBe(4);
     expect(result.detail).toMatch(/Do not retry/i);
   });
 
@@ -64,7 +67,9 @@ describe("reconcileTransaction", () => {
     });
 
     expect(result.status).toBe("not_found");
-    expect(result.exitCode).toBe(1);
+    // 3, not 1: nothing was broadcast, so a fresh payment is safe — the opposite
+    // of `pending`. A script gating on "do not retry" needs this distinction.
+    expect(result.exitCode).toBe(3);
   });
 
   it("reports failed on a reverted EVM receipt", async () => {

@@ -61,13 +61,50 @@ export async function addProtection(options: AddOptions): Promise<AddResult> {
   const parsed = parseRoute(route);
 
   const hasLens = original.includes("paymentLens(");
-  const hasRouteEntry = hasRouteEntryFor(original, parsed);
+  const existingPrice = priceForRoute(original, parsed);
 
-  if (hasLens && hasRouteEntry) {
+  if (hasLens && existingPrice !== undefined) {
+    if (existingPrice === price) {
+      return {
+        changed: false,
+        diff: "",
+        text: `${file} already charges ${price} for ${parsed.method} ${parsed.path}. Nothing to do.`,
+        exitCode: 0,
+      };
+    }
+    // Re-running with a different price is the obvious way to fix a typo, and it
+    // used to be a silent no-op: the command matched the route *key* only and
+    // reported "already charges for … Nothing to do" while the old price stayed
+    // in the file. The user believed the price was updated.
+    const updated = replacePrice(original, parsed, existingPrice, price);
+    if (updated === undefined) {
+      throw new AddError(
+        `${file} charges ${existingPrice} for ${parsed.method} ${parsed.path}, but the price is not written in a form this command can rewrite safely. Change it by hand.`,
+      );
+    }
+    const priceDiff = unifiedDiff(file, original, updated);
+    if (!options.write) {
+      return {
+        changed: true,
+        diff: priceDiff,
+        text: [
+          `Dry run — ${file} would change as follows.`,
+          "",
+          priceDiff,
+          "",
+          "Re-run with --write to apply.",
+        ].join("\n"),
+        exitCode: 0,
+      };
+    }
+    // The write itself, not just the report: the first version of this branch
+    // returned "Updated the price" without touching the file, so the command
+    // claimed a change it had not made.
+    await writeFile(file, updated, "utf8");
     return {
-      changed: false,
-      diff: "",
-      text: `${file} already charges for ${parsed.method} ${parsed.path}. Nothing to do.`,
+      changed: true,
+      diff: priceDiff,
+      text: `Updated the price for ${parsed.method} ${parsed.path} from ${existingPrice} to ${price}.`,
       exitCode: 0,
     };
   }
@@ -153,13 +190,33 @@ function routeMapEntry(route: ParsedRoute, price: string): string {
 }
 
 /**
- * Same rule as config string prices: non-empty after trim. Object asset prices
- * are not a CLI flag form.
+ * Same rule as config string prices, and for the same reason.
+ *
+ * `add` used to check only "not empty", so `--price abc` or `--price -1` was
+ * written verbatim into the routes map — code that is guaranteed to fail at
+ * runtime, produced by the tool whose job is to make a paywall work. The comment
+ * here claimed parity with config validation while implementing one third of it.
+ *
+ * @param price - Raw `--price` value
+ * @returns The trimmed price
+ * @throws {AddError} When it is not a positive decimal amount
  */
 function assertAddPrice(price: string): string {
   const trimmed = price.trim();
   if (trimmed.length === 0) {
     throw new AddError('price is empty. Use a decimal such as "0.001".');
+  }
+  // A "$" prefix is the SDK's USD marker; the rest must still be a plain decimal.
+  const digits = trimmed.startsWith("$") ? trimmed.slice(1).trim() : trimmed;
+  if (!/^\d+(\.\d+)?$/.test(digits)) {
+    throw new AddError(
+      `"${price}" is not a decimal amount. Use digits with at most one decimal point, such as 0.001. A negative or non-numeric value reaches the SDK, which throws per request, so every buyer gets HTTP 500 instead of a 402.`,
+    );
+  }
+  if (Number(digits) <= 0) {
+    throw new AddError(
+      `"${price}" is not a positive amount. A zero price advertises the route as paid while charging nothing.`,
+    );
   }
   return trimmed;
 }
@@ -277,14 +334,53 @@ function findRoutesObject(source: string): { open: number; close: number } | und
 }
 
 /** True when the lens route map already charges for this route. */
-function hasRouteEntryFor(source: string, route: ParsedRoute): boolean {
+/**
+ * The price currently written for a route, if this command can read it.
+ *
+ * Returns the string form only: an object price (`{ asset, amount }`) is not
+ * something `add` writes, so it is left to the "cannot rewrite safely" path
+ * rather than being silently mismatched.
+ *
+ * @param source - File contents
+ * @param route - Route to look for
+ * @returns The price as written, or undefined when the route is not priced here
+ */
+function priceForRoute(source: string, route: ParsedRoute): string | undefined {
   const key = escapeRegExp(routeKey(route));
-  const quotedKey = new RegExp(`["'\`]${key}["'\`]\\s*:`);
   const routes = findRoutesObject(source);
-  if (routes) return quotedKey.test(source.slice(routes.open, routes.close + 1));
-  // No routes map in code: the prices come from env or x402.config.json, so a
-  // mention of the path elsewhere says nothing about whether it is priced.
-  return false;
+  if (!routes) {
+    // Prices come from env or x402.config.json; a mention of the path elsewhere
+    // says nothing about what it costs.
+    return undefined;
+  }
+  const body = source.slice(routes.open, routes.close + 1);
+  // `"GET /x": "0.001"` or `'GET /x': '0.001'`, with any whitespace between.
+  const pattern = new RegExp(`["'\`]${key}["'\`]\\s*:\\s*(["'\`])([^"'\`]*)\\1`);
+  const match = pattern.exec(body);
+  return match?.[2];
+}
+
+/**
+ * Rewrite the price of an existing route entry in place.
+ *
+ * @param source - File contents
+ * @param route - Route whose price changes
+ * @param from - Current price, as read by {@link priceForRoute}
+ * @param to - New price
+ * @returns Updated source, or undefined when the entry cannot be rewritten safely
+ */
+function replacePrice(
+  source: string,
+  route: ParsedRoute,
+  from: string,
+  to: string,
+): string | undefined {
+  const key = escapeRegExp(routeKey(route));
+  const pattern = new RegExp(
+    `(["'\`]${key}["'\`]\\s*:\\s*)(["'\`])${escapeRegExp(from)}\\2`,
+  );
+  if (!pattern.test(source)) return undefined;
+  return source.replace(pattern, (_match, prefix: string) => `${prefix}${tsStringLiteral(to)}`);
 }
 
 /**

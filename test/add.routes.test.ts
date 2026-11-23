@@ -173,21 +173,42 @@ app.get("/weather", (_req, res) => res.json({}));
     expect(updated).toContain('"GET /weather": "0.001"');
   });
 
-  it("escapes quotes and backslashes in --price so the source stays valid", async () => {
+  it("refuses a --price that is not a decimal amount", async () => {
+    // A price carrying code is now rejected before it can reach the file. Before
+    // the price was validated, the only defence was escaping the string, which
+    // meant a nonsense price like `abc` was written happily — the escaping
+    // protected the source, not the payment.
     const path = await tempFile(TWO_ROUTES);
-    const price = '0.001"; evil(); //';
-    await addProtection({
-      file: path,
-      route: "GET /weather",
-      price,
-      write: true,
-    });
+    await expect(
+      addProtection({ file: path, route: "GET /weather", price: '0.001"; evil(); //', write: true }),
+    ).rejects.toThrow(/not a decimal amount/);
+
+    const unchanged = await readFile(path, "utf8");
+    expect(unchanged).toBe(TWO_ROUTES);
+  });
+
+  it("refuses a negative or zero --price", async () => {
+    const path = await tempFile(TWO_ROUTES);
+    for (const price of ["-1", "0", "1e-3"]) {
+      await expect(
+        addProtection({ file: path, route: "GET /weather", price, write: true }),
+        `price ${price} should be refused`,
+      ).rejects.toThrow(/not a decimal amount|not a positive amount/);
+    }
+  });
+
+  it("still escapes the price it writes, as a second line of defence", async () => {
+    // Validation is the first layer; `tsStringLiteral` is the second. A price
+    // that survives validation is a plain decimal today, but the writer must not
+    // assume that — one relaxation of the check above and an unescaped write
+    // becomes code execution in the user's file.
+    const path = await tempFile(TWO_ROUTES);
+    await addProtection({ file: path, route: "GET /weather", price: "0.005", write: true });
 
     const updated = await readFile(path, "utf8");
-    const expectedEntry = `${JSON.stringify("GET /weather")}: ${JSON.stringify(price)}`;
-    expect(updated).toContain(expectedEntry);
+    expect(updated).toContain(`${JSON.stringify("GET /weather")}: ${JSON.stringify("0.005")}`);
     // An unescaped break-out would look like this; stringify prevents it.
-    expect(updated).not.toContain('"GET /weather": "0.001"; evil');
+    expect(updated).not.toContain('"GET /weather": 0.005;');
   });
 
   it("rejects an empty price", async () => {

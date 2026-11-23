@@ -175,6 +175,25 @@ export function diffChallenges(
 }
 
 /**
+ * The label a watched endpoint is stored and looked up under.
+ *
+ * The write side stored `result.endpoint` while the read side looked up
+ * `` `GET ${url}` `` — the two agree only for the default GET/no-name case. Any
+ * state written with a custom `name` or a non-GET method was invisible to the
+ * next run, so drift detection silently reset to "no baseline", the monitor
+ * reported healthy, and it never alerted.
+ *
+ * One function, used by both sides, is the fix: a key that is computed twice
+ * from two expressions is a key that will eventually disagree.
+ *
+ * @param target - Endpoint as configured
+ * @returns Stable label for state and for event/alert text
+ */
+export function endpointKey(target: WatchedEndpoint): string {
+  return target.name ?? `${target.method ?? "GET"} ${target.url}`;
+}
+
+/**
  * Check one endpoint and compare it against its previous challenge.
  *
  * Never throws: a DNS failure is a result with `ok: false`, because a monitor
@@ -188,7 +207,7 @@ export async function checkEndpoint(
   target: WatchedEndpoint,
   previous: WirePaymentRequired | undefined,
 ): Promise<WatchResult> {
-  const endpoint = target.name ?? `${target.method ?? "GET"} ${target.url}`;
+  const endpoint = endpointKey(target);
 
   let inspected: Awaited<ReturnType<typeof inspectEndpoint>>;
   try {

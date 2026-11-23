@@ -12,6 +12,7 @@ import { inspectEndpoint } from "./commands/inspect.js";
 import { reconcileTransaction } from "./commands/reconcile.js";
 import {
   checkEndpoint,
+  endpointKey,
   nextState,
   readWatchState,
   writeWatchState,
@@ -56,9 +57,13 @@ Options:
   --help, -h    Show this help.
 
 Exit codes:
-  0  success
-  1  a check failed or a finding is an error
+  0  success / confirmed
+  1  a check failed, a finding is an error, or the transaction failed on chain
   2  bad usage
+  reconcile only, because the safe action differs per state:
+  3  not found — nothing broadcast, a fresh payment is safe
+  4  pending — on chain, will confirm; retrying would pay twice
+  5  unknown — the RPC could not answer; say nothing about retrying
 `;
 
 /**
@@ -265,7 +270,12 @@ export async function main(argv: string[]): Promise<number> {
         const runOnce = async (): Promise<number> => {
           const results: WatchResult[] = [];
           for (const url of urls) {
-            results.push(await checkEndpoint({ url }, state.lastChallenges[`GET ${url}`]));
+            results.push(
+              await checkEndpoint(
+                { url },
+                state.lastChallenges[endpointKey({ url })],
+              ),
+            );
           }
           state = nextState(results, state);
           if (statePath) await writeWatchState(statePath, state);
@@ -279,17 +289,20 @@ export async function main(argv: string[]): Promise<number> {
           const alert = await sendAlert(channel, needsAttention, results.length);
 
           if (asJson) {
+            const document = {
+              results,
+              drifted: drifted.length,
+              failed: failed.length,
+              alert: alert.sent ? { sent: true } : { sent: false, reason: alert.reason },
+            };
+            // In repeating mode this is one document per line, so the stream is
+            // NDJSON and a consumer can parse it incrementally. Pretty-printing
+            // each run produced concatenated multi-line documents, which no
+            // streaming parser accepts and `JSON.parse` of the whole stream
+            // rejects — the usage text calls `--json` "machine-readable", and a
+            // stream that cannot be read is not.
             process.stdout.write(
-              `${JSON.stringify(
-                {
-                  results,
-                  drifted: drifted.length,
-                  failed: failed.length,
-                  alert: alert.sent ? { sent: true } : { sent: false, reason: alert.reason },
-                },
-                null,
-                2,
-              )}\n`,
+              once ? `${JSON.stringify(document, null, 2)}\n` : `${JSON.stringify(document)}\n`,
             );
           } else {
             for (const result of results) {

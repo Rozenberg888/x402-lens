@@ -10,6 +10,30 @@
 
 import { describeNetwork, isCaip2, suggestCaip2 } from "@x402-lens/core";
 
+/**
+ * Exit codes, distinct per safe action.
+ *
+ * The command exists to answer "is it safe to retry", and the states need
+ * opposite answers:
+ *
+ * - `0` confirmed: settled, do not charge again.
+ * - `1` failed on chain: funds did not move, a fresh payment is safe.
+ * - `2` usage error: the arguments are wrong, nothing was checked.
+ * - `3` not found: nothing with this hash, so a fresh payment is safe.
+ * - `4` pending: on chain, will confirm — a retry would pay twice.
+ * - `5` unknown: the RPC could not answer, so say nothing about retrying.
+ *
+ * `pending` and `not_found` used to share exit 1, which left a script unable to
+ * distinguish "do not retry" from "safe to retry" without parsing `--json` —
+ * the one distinction this command exists to provide.
+ */
+const EXIT_CONFIRMED = 0;
+const EXIT_FAILED = 1;
+const EXIT_USAGE = 2;
+const EXIT_NOT_FOUND = 3;
+const EXIT_PENDING = 4;
+const EXIT_UNKNOWN = 5;
+
 export interface ReconcileOptions {
   /** Transaction hash (`0x…` for EVM, base58 signature for Solana). */
   tx: string;
@@ -120,8 +144,8 @@ export async function reconcileTransaction(
       network,
       tx,
       rpcUrl,
-      detail: `RPC call failed: ${(error as Error).message}`,
-      exitCode: 1,
+      detail: `RPC call failed: ${(error as Error).message}. Nothing is known about this transaction, so do not treat this as either safe or unsafe to retry.`,
+      exitCode: EXIT_UNKNOWN,
     });
   }
 }
@@ -148,7 +172,12 @@ async function reconcileEvm(input: {
         tx: input.tx,
         rpcUrl: input.rpcUrl,
         detail: "Transaction is in the mempool or not yet mined. Do not retry the payment.",
-        exitCode: 1,
+        // Distinct from `not_found`: this one is on chain and will confirm, so a
+        // retry would pay twice. `not_found` means the opposite — nothing
+        // broadcast, so a fresh payment is safe. Both used to exit 1, which made
+        // the CLI's only stated purpose ("know whether it is safe to retry")
+        // unavailable to a script without parsing --json.
+        exitCode: EXIT_PENDING,
       });
     }
     return report({
@@ -156,8 +185,9 @@ async function reconcileEvm(input: {
       network: input.network,
       tx: input.tx,
       rpcUrl: input.rpcUrl,
-      detail: "No transaction with this hash on this network. The settle may never have broadcast.",
-      exitCode: 1,
+      detail:
+        "No transaction with this hash on this network. The settle may never have broadcast — a fresh payment is safe.",
+      exitCode: EXIT_NOT_FOUND,
     });
   }
 
@@ -279,3 +309,4 @@ function report(
   ];
   return { ...result, text: lines.join("\n") };
 }
+

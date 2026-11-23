@@ -79,6 +79,24 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
     }
   }
 
+  // Normalise `accepts` to an array of objects before anything reads it.
+  //
+  // Every consumer below — `validatePaymentRequired`, `diagnose`,
+  // `describeChallenge` — assumes an array of object entries. A server under
+  // diagnosis can send `accepts: null`, `accepts: [null]`, or `accepts: "nope"`,
+  // and the tool exists for exactly that case. Without this normalisation each
+  // consumer crashes separately and the CLI reports a TypeError as a network
+  // failure; a raw (unfiltered) array is still passed through so conformance can
+  // report the original defect.
+  if (paymentRequired) {
+    const rawAccepts = (paymentRequired as { accepts?: unknown }).accepts;
+    (paymentRequired as { accepts?: unknown }).accepts = Array.isArray(rawAccepts)
+      ? rawAccepts
+      : rawAccepts === undefined
+        ? []
+        : [rawAccepts];
+  }
+
   const headerRecord: Record<string, string | undefined> = {};
   response.headers.forEach((value, key) => {
     headerRecord[key.toLowerCase()] = value;
@@ -86,7 +104,18 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
   const cors = checkCors(headerRecord);
 
   const conformance = paymentRequired ? validatePaymentRequired(paymentRequired) : [];
-  const findingsList = paymentRequired
+
+  // `diagnose` assumes a challenge-shaped object and dereferences
+  // `accepts[].network`. A hostile or buggy server can return `accepts: [null]`,
+  // and the tool exists to diagnose broken servers — malformed input is the
+  // expected case, not an edge case. Reproduced before this guard: the TypeError
+  // escaped, was caught by the network handler, and was reported as
+  // "Could not reach <url>: Cannot read properties of null (reading 'network')",
+  // blaming the connection for the response body.
+  //
+  // When conformance already reports the challenge as malformed there is nothing
+  // extra a deeper diagnosis can add, so the shallow check is the whole answer.
+  const findingsList = paymentRequired && conformance.length === 0
     ? diagnose({ paymentRequired })
     : [];
 
@@ -143,8 +172,18 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
     lines.push(formatFindings(findingsList));
   }
 
+  // A finding with severity `error` means the paywall cannot work as advertised
+  // — the same class as a schema violation. Leaving findings out of this
+  // calculation printed
+  //   ERROR eip712_domain_mismatch … The EIP-712 domain version is not a plain string.
+  // and then exited 0, so a CI job gating on `inspect` passed a paywall the tool
+  // had just declared broken. `warn` and `info` are advisory and stay non-fatal.
+  const hasErrorFinding = findingsList.some(item => item.severity === "error");
   const failed =
-    !paymentRequired || conformance.length > 0 || cors.issues.length > 0;
+    !paymentRequired ||
+    conformance.length > 0 ||
+    cors.issues.length > 0 ||
+    hasErrorFinding;
 
   return {
     status: response.status,
@@ -169,6 +208,15 @@ function describeChallenge(paymentRequired: WirePaymentRequired): string {
   const accepts = paymentRequired.accepts ?? [];
   lines.push(`accepts:     ${accepts.length}`);
   accepts.forEach((entry, index) => {
+    // `conformance` already reports a malformed entry; this function's job is to
+    // print what arrived, and a hostile or buggy server can send `accepts: [null]`.
+    // Dereferencing it here threw out of `inspectEndpoint`, so the tool crashed
+    // on exactly the input it exists to diagnose, and the CLI reported it as a
+    // network failure.
+    if (!entry || typeof entry !== "object") {
+      lines.push(`  [${index}] (not an object: ${JSON.stringify(entry)})`);
+      return;
+    }
     lines.push(
       `  [${index}] ${entry.scheme} on ${describeNetwork(entry.network)}`,
       `      amount: ${entry.amount} (atomic units)`,
@@ -181,8 +229,15 @@ function describeChallenge(paymentRequired: WirePaymentRequired): string {
     // Two entries can be the same price and still differ in what the buyer
     // owes, because each chain has its own token decimals. Saying so prevents
     // the natural but wrong assumption that the amounts should match.
-    const amounts = new Set(accepts.map(entry => entry.amount));
-    const assets = new Set(accepts.map(entry => entry.asset));
+    //
+    // Only well-formed entries take part: a `null` in the array is reported per
+    // entry above, and reading `.amount` off it here would crash for the same
+    // reason the loop did before.
+    const wellFormed = accepts.filter(
+      (entry): entry is NonNullable<typeof entry> => Boolean(entry) && typeof entry === "object",
+    );
+    const amounts = new Set(wellFormed.map(entry => entry.amount));
+    const assets = new Set(wellFormed.map(entry => entry.asset));
     lines.push(
       `      note:   ${accepts.length} payment options — one per network. ${
         amounts.size === 1
@@ -190,7 +245,7 @@ function describeChallenge(paymentRequired: WirePaymentRequired): string {
           : `Amounts differ by token decimals (${Array.from(amounts).join(", ")}).`
       }`,
     );
-    if (assets.size === 1) {
+    if (assets.size === 1 && wellFormed.length > 0) {
       lines.push(
         `      note:   Every option uses the same asset, which is only valid if that token exists on all of them.`,
       );

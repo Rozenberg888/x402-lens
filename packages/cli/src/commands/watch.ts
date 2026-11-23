@@ -225,9 +225,16 @@ export async function checkEndpoint(
 
   return {
     endpoint,
-    // A paywall is healthy when it answers 402 with a readable challenge and
+    // A paywall is healthy when it answers **402** with a readable challenge and
     // nothing a previous check depended on has changed.
-    ok: challenge !== undefined && drift.length === 0,
+    //
+    // The status check was missing, which made a 5xx look healthy whenever it
+    // carried a `PAYMENT-REQUIRED` header — the exact outage class a synthetic
+    // monitor exists to catch, reported as fine and raising no alert. A 402 is
+    // the only status that means "paywalled and working": 200 means the paywall
+    // is gone, 3xx means a proxy is answering instead, and 5xx means the origin
+    // is broken.
+    ok: inspected.status === 402 && challenge !== undefined && drift.length === 0,
     status: inspected.status,
     ...(challenge ? { challenge } : {}),
     drift,

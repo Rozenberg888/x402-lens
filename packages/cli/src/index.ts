@@ -78,6 +78,19 @@ export async function main(argv: string[]): Promise<number> {
       : 0;
   }
 
+  // An argument the parser could not interpret is bad usage, not a failed check.
+  // Silently ignoring it was how `--timeoutt 5` ran with the default timeout and
+  // still exited 0, leaving the user to think their flag took effect.
+  if (args.errors.length > 0) {
+    const message = args.errors.join("\n");
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ error: message, exitCode: 2 }, null, 2)}\n`);
+    } else {
+      process.stderr.write(`${message}\n\n${USAGE}`);
+    }
+    return 2;
+  }
+
   try {
     switch (args.command) {
       case "inspect": {
@@ -86,17 +99,27 @@ export async function main(argv: string[]): Promise<number> {
           process.stderr.write("inspect requires a URL.\n\n" + USAGE);
           return 2;
         }
+
+        const timeout = parseTimeout(flagValue(args, "timeout"));
+        if (timeout.error) {
+          process.stderr.write(`${timeout.error}\n`);
+          return 2;
+        }
+        const headerFlags = parseHeaderFlags(argv);
+        if (headerFlags.errors.length > 0) {
+          process.stderr.write(`${headerFlags.errors.join("\n")}\n`);
+          return 2;
+        }
+
         let result: Awaited<ReturnType<typeof inspectEndpoint>>;
         try {
           result = await inspectEndpoint({
             url,
             ...(flagValue(args, "method") ? { method: flagValue(args, "method") as string } : {}),
-            ...(flagValue(args, "header")
-              ? { headers: parseHeaderFlags(argv) }
+            ...(Object.keys(headerFlags.headers).length > 0
+              ? { headers: headerFlags.headers }
               : {}),
-            ...(flagValue(args, "timeout")
-              ? { timeoutMs: Number.parseInt(flagValue(args, "timeout") as string, 10) }
-              : {}),
+            ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
           });
         } catch (error) {
           // `fetch` throws before any response exists: a malformed URL, a DNS
@@ -207,9 +230,16 @@ export async function main(argv: string[]): Promise<number> {
         }
 
         const statePath = flagValue(args, "state");
-        const intervalFlag = flagValue(args, "interval");
-        const intervalSeconds = intervalFlag ? Number.parseInt(intervalFlag, 10) : undefined;
-        const once = !intervalSeconds || intervalSeconds <= 0;
+        const interval = parseInterval(flagValue(args, "interval"));
+        if (interval.error) {
+          process.stderr.write(`${interval.error}\n`);
+          return 2;
+        }
+        const intervalSeconds = interval.value;
+        // `--once` and "no interval" mean the same thing. Reading the flag at
+        // all matters: it was documented in the usage text and never consulted,
+        // so `watch --once <url>` only worked by accident.
+        const once = flagEnabled(args, "once") || intervalSeconds === undefined;
 
         // Worst exit code seen across runs, so an interrupted or long-running
         // monitor reports failure if any check ever failed.
@@ -307,14 +337,22 @@ export async function main(argv: string[]): Promise<number> {
             if (code !== 0) lastExitCode = code;
             if (stopping) break;
             await new Promise<void>(resolve => {
-              const timer = setTimeout(resolve, intervalSeconds * 1000);
-              // Wake immediately on a signal instead of waiting out the interval.
-              const wake = (): void => {
+              const timer = setTimeout(done, intervalSeconds * 1000);
+
+              // Wake immediately on a signal instead of waiting out the
+              // interval. Both listeners are removed on whichever path runs
+              // first: leaving them registered accumulated one SIGINT listener
+              // per cycle (Node warns at 11), so a monitor on a 30 s interval
+              // grew thousands of them per day and every Ctrl+C fired all the
+              // stale closures.
+              function done(): void {
                 clearTimeout(timer);
+                process.off("SIGINT", done);
+                process.off("SIGTERM", done);
                 resolve();
-              };
-              process.once("SIGINT", wake);
-              process.once("SIGTERM", wake);
+              }
+              process.once("SIGINT", done);
+              process.once("SIGTERM", done);
             });
           }
         } finally {
@@ -400,21 +438,106 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 /**
- * `--header` may repeat; `parseArgs` only keeps the last. Re-scan argv for all
- * occurrences so `inspect` can send several headers.
+ * Validate `--timeout` as a positive integer of milliseconds.
+ *
+ * `Number.parseInt` with no check was passed straight to `AbortSignal.timeout`,
+ * which throws `RangeError` for `NaN` and negatives. That throw was caught by the
+ * network-error handler and reported as "Could not reach <url>: The value of
+ * "delay" is out of range" — blaming the endpoint for a locally invalid argument,
+ * with exit 1 (a failed check) instead of 2 (bad usage).
+ *
+ * @param raw - Flag value, if given
+ * @returns Parsed value, or an error message
  */
-function parseHeaderFlags(argv: string[]): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] !== "--header") continue;
-    const value = argv[index + 1];
-    if (!value) continue;
-    const separator = value.indexOf(":");
-    if (separator === -1) continue;
-    headers[value.slice(0, separator).trim()] = value.slice(separator + 1).trim();
-    index += 1;
+function parseTimeout(raw: string | undefined): { value?: number; error?: string } {
+  if (raw === undefined) return {};
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    return { error: `--timeout must be a positive integer number of milliseconds, got "${raw}".` };
   }
-  return headers;
+  return { value: Number(raw) };
+}
+
+/**
+ * Validate `--interval` as a positive number of seconds.
+ *
+ * Node clamps a `setTimeout` delay above 2^23-1 ms (about 24.8 days) to 1 ms, so
+ * `--interval 3000000` became a ~1 ms poll loop: 330 requests to the monitored
+ * endpoint in 7 seconds, plus a `TimeoutOverflowWarning`. The ceiling is enforced
+ * here rather than left to the runtime.
+ *
+ * @param raw - Flag value, if given
+ * @returns Parsed value, or an error message
+ */
+function parseInterval(raw: string | undefined): { value?: number; error?: string } {
+  if (raw === undefined) return {};
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    return { error: `--interval must be a positive number of seconds, got "${raw}".` };
+  }
+  const seconds = Number(raw);
+  // 2_147_483 ms is the largest delay setTimeout honours; stay under it.
+  if (seconds * 1000 > 2_147_483) {
+    return {
+      error: `--interval must be at most ${Math.floor(2_147_483 / 1000)} seconds; larger values are clamped by Node to a 1 ms delay, which turns the monitor into a request flood.`,
+    };
+  }
+  return { value: seconds };
+}
+
+/**
+ * Collect every `--header` occurrence, in both spellings.
+ *
+ * `parseArgs` keeps one value per flag, and `--header` is the one flag that must
+ * repeat: inspecting an authenticated endpoint needs several. The previous
+ * version re-scanned `argv` for the exact token `"--header"`, so
+ * `--header="Authorization: Bearer …"` — the spelling `parseArgs` supports —
+ * was silently dropped, and the request went out unauthenticated while the user
+ * saw a 401 and blamed their token.
+ *
+ * A value without a `:` is a usage error rather than a silent skip: dropping it
+ * means sending a request the user did not describe.
+ *
+ * @param argv - Raw arguments, scanned for repeats
+ * @returns Headers to send, plus any header that could not be parsed
+ */
+function parseHeaderFlags(argv: string[]): {
+  headers: Record<string, string>;
+  errors: string[];
+} {
+  const headers: Record<string, string> = {};
+  const errors: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined) continue;
+
+    let value: string | undefined;
+    if (token === "--header") {
+      value = argv[index + 1];
+      index += 1;
+    } else if (token.startsWith("--header=")) {
+      value = token.slice("--header=".length);
+    } else {
+      continue;
+    }
+
+    if (value === undefined || value.length === 0) {
+      errors.push('--header requires a value such as "Authorization: Bearer …".');
+      continue;
+    }
+    const separator = value.indexOf(":");
+    if (separator === -1) {
+      errors.push(`--header "${value}" has no colon. Use "Name: value".`);
+      continue;
+    }
+    const name = value.slice(0, separator).trim();
+    if (name.length === 0) {
+      errors.push(`--header "${value}" has no name before the colon.`);
+      continue;
+    }
+    headers[name] = value.slice(separator + 1).trim();
+  }
+
+  return { headers, errors };
 }
 
 const isDirectRun =

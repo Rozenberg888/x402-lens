@@ -40,6 +40,7 @@ import {
 } from "@x402-lens/core";
 import {
   createPaymentWrapper,
+  extractPaymentFromMeta,
   extractPaymentRequiredFromError,
   extractPaymentResponseFromMeta,
   type MCPToolCallback,
@@ -256,9 +257,102 @@ function definePaidTool(bus: EventBus, options: PaidToolOptions): PaidTool {
         }
 
         emitOutcome(bus, baseEvent, requestId, options, result, startedAt);
+
+        // Give the caller the part of the diagnosis it can act on.
+        //
+        // The payload has to be read from `_meta` here rather than taken from
+        // the result: the SDK answers a refusal with a fresh challenge and does
+        // not echo back what the caller signed. Without it, `diagnose` can only
+        // see the challenge and produces nothing the caller can act on — which
+        // is what the first version of this got wrong.
+        const challenge = challengeIn(result);
+        if (challenge) {
+          const presented = safeExtract(() => extractPaymentFromMeta(metaOf(extra))) ?? undefined;
+          const findings = diagnose({
+            paymentRequired: challenge as never,
+            ...(presented ? { paymentPayload: presented as never } : {}),
+            now: startedAt,
+          });
+          return withDiagnosis(result, agentFindings(findings));
+        }
+
         return result;
       };
     },
+  };
+}
+
+/**
+ * Findings the caller can act on.
+ *
+ * A finding about `payment.*` describes the caller's own payload — it signed for
+ * a network the challenge does not offer, its authorization expired — and the
+ * caller can fix that and retry. A finding about `challenge.*` describes the
+ * challenge this server generated: a network that is not CAIP-2, a missing
+ * asset. The caller cannot fix that, and telling it otherwise invites the agent
+ * to retry with a different network forever.
+ *
+ * That distinction is the whole answer to "should findings go into the MCP error
+ * response": some should, and sending all of them would be worse than sending
+ * none.
+ *
+ * @param findings - Everything the engine diagnosed
+ * @returns Only the entries whose field belongs to the caller's payload
+ */
+export function agentFindings(findings: Finding[]): Finding[] {
+  return findings.filter(finding => finding.field.startsWith("payment."));
+}
+
+/**
+ * Append a diagnosis to an MCP tool result.
+ *
+ * Added as an extra `content` item rather than merged into
+ * `structuredContent`: clients validate that field as `PaymentRequired`, and
+ * putting findings in it would break every conformant client to help some.
+ * A text item is additive, and an agent reading `content` sees both.
+ *
+ * @param result - The SDK's 402 result
+ * @param findings - Pre-filtered findings for the caller
+ * @returns The result, with a diagnosis item when there is something to say
+ */
+function withDiagnosis(result: WrappedToolResult, findings: Finding[]): WrappedToolResult {
+  if (findings.length === 0) return result;
+
+  const lines = findings.map(
+    finding => `${finding.severity.toUpperCase()} ${finding.code} (${finding.field}): ${finding.problem} Fix: ${finding.fix}`,
+  );
+
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      {
+        type: "text",
+        // Labelled so an agent can tell this is advice about its own payload,
+        // not part of the payment challenge it is being asked to sign.
+        text: `x402-lens diagnosis of your payment payload:\n${lines.join("\n")}`,
+      },
+    ],
+  };
+}
+
+/**
+ * The `_meta` bag an MCP handler receives, if any.
+ *
+ * The MCP SDK passes `(args, extra)` and the payment payload lives at
+ * `extra._meta`; the shape is loose because the SDK types it as `unknown`.
+ *
+ * @param extra - Second handler argument from the MCP SDK
+ * @returns The meta object, or undefined when there is none
+ */
+function metaOf(extra: unknown): { _meta?: Record<string, unknown>; name: string; arguments: Record<string, unknown> } | undefined {
+  if (!extra || typeof extra !== "object") return undefined;
+  const candidate = extra as { _meta?: unknown };
+  if (!candidate._meta || typeof candidate._meta !== "object") return undefined;
+  return {
+    _meta: candidate._meta as Record<string, unknown>,
+    name: "",
+    arguments: {},
   };
 }
 

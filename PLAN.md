@@ -91,16 +91,25 @@ developer sitting next to it to interpret `invalidReason`.
       `createPaymentWrapper`; a guard test forbids `fetch(` / `verify(` /
       `settle(` in the adapter so a second implementation cannot creep in.
       (2026-11-20)
-- [ ] **Agent-readable findings.** `explain` output already has the shape an
-      agent needs (code, field, problem, fix). Check whether emitting findings
-      *into* the MCP error response is correct — the agent may act on them,
-      which is a different bar than a human reading a log.
+- [x] **Agent-readable findings.** Answered, and the answer is "some, not all".
+      A `payment.*` finding describes the caller's own payload — it signed for a
+      network the challenge does not offer, its authorization expired — and the
+      caller can fix that and retry. A `challenge.*` finding describes the
+      challenge this server generated, which the caller cannot repair; sending it
+      would send an agent into a retry loop it cannot escape. `agentFindings()`
+      keeps the first and drops the second, because sending all findings and
+      sending none are both wrong.
+      Delivered as an extra `content` item, never merged into
+      `structuredContent`: clients validate that field as `PaymentRequired`, so
+      adding to it would break every conformant client to help some.
+      (2026-11-20)
 
 **Exit criterion:** an MCP server can report "why did this tool call fail to
 pay" without the operator reading raw facilitator output.
-— **partly met (2026-11-20):** the event carries the findings, so an operator
-sees them. Whether the *client* should receive them is still open, and is the
-second checkbox.
+— **met (2026-11-20).** Verified end to end: an expired authorization produces
+`ERROR authorization_expired (payment.authorization.validBefore): The
+authorization expired at … Fix: Request a fresh 402 …` as a second content item,
+with the challenge unchanged in the first.
 
 ---
 

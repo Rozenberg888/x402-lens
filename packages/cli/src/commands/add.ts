@@ -36,7 +36,6 @@ export interface AddResult {
 
 const IMPORT_LINE = 'import { paymentLens } from "@x402-lens/express";';
 const LENS_DECLARATION = "const lens = paymentLens();";
-const MOUNT_LINE = "app.use(lens.middleware);";
 
 /**
  * Insert payment protection into an existing Express server file.
@@ -120,6 +119,21 @@ export async function addProtection(options: AddOptions): Promise<AddResult> {
   if (!routePattern) {
     throw new AddError(
       `Could not find a route declaration for ${tsStringLiteral(`${parsed.method} ${parsed.path}`)} in ${file}. The add command recognises app.get("/path", ...) and router.post("/path", ...) forms written on one line. Add the middleware manually:\n\n  const lens = paymentLens({ routes: { ${routeMapEntry(parsed, price)} } });\n  app.use(lens.middleware);\n`,
+    );
+  }
+
+  // Only `app` is supported, and saying so beats writing a mount that cannot run.
+  //
+  // On a router-only file this used to insert `app.use(lens.middleware)` where no
+  // `app` exists: the file was reported as updated and then threw
+  // `ReferenceError: app is not defined` at import. Writing `router.use(...)`
+  // instead is not a fix either — a router is normally mounted under a prefix
+  // (`app.use("/acme", router)`), and the lens matches the path it is given, so
+  // the protection would silently miss every request. There is no correct edit to
+  // make here, so the command refuses and shows the two lines to place by hand.
+  if (routePattern.receiver !== "app") {
+    throw new AddError(
+      `${file} declares this route on \`${routePattern.receiver}\`, not on an Express app. The lens has to be mounted before the router, on the app that owns it, or it never runs for this route — and mounting it on the router would match the wrong path when the router has a prefix. Add it by hand where the app is assembled:\n\n  const lens = paymentLens({ routes: { ${routeMapEntry(parsed, price)} } });\n  app.use(lens.middleware);\n\nThen pass \`--route\` again if the lens is already mounted elsewhere; the existing route map in ${file} can be edited directly.`,
     );
   }
 
@@ -452,12 +466,21 @@ interface RouteMatch {
   routeStart: number;
   /** The matched declaration text, for reporting. */
   matched: string;
+  /**
+   * The object the route is declared on: `app`, `router`, or `server`.
+   *
+   * The mount has to go on the same object the route lives on. A router module
+   * has no `app` in scope, so mounting on `app` there produced
+   * `ReferenceError: app is not defined` at import time — in a file `add` had
+   * just reported as updated.
+   */
+  receiver: string;
 }
 
 /**
  * Find the route and where to insert the guard.
  *
- * Matches `app.get("/path",` and `router.get("/path",` — including single- or
+ * Matches `app.get("/path",` and `router.post("/path", ...)` — including single- or
  * double-quoted paths. Refuses multi-line and computed-path variants by simply
  * not matching them.
  */
@@ -465,13 +488,14 @@ function findRouteDeclaration(source: string, route: ParsedRoute): RouteMatch | 
   const method = route.method.toLowerCase();
   const escapedPath = escapeRegExp(route.path);
   const pattern = new RegExp(
-    `\\b(?:app|router|server)\\.${method}\\(\\s*(["'\`])${escapedPath}\\1\\s*,`,
+    `\\b(app|router|server)\\.${method}\\(\\s*(["'\`])${escapedPath}\\2\\s*,`,
   );
   const match = pattern.exec(source);
   if (!match) return undefined;
   return {
     routeStart: match.index,
     matched: match[0],
+    receiver: match[1] ?? "app",
   };
 }
 
@@ -483,9 +507,12 @@ function applyEdits(
 ): string {
   let updated = source;
 
-  // The lens is mounted globally and its route map decides what is protected,
-  // so no per-route guard is needed. Adding one as well would duplicate the
-  // check on the same request.
+  // The lens is mounted once, on the app, and its route map decides what is
+  // protected — so no per-route guard is needed.
+  //
+  // The mount target is the receiver the route is declared on. Only `app` is
+  // accepted: `router` and `server` are refused above, because a router is
+  // normally mounted under a prefix and the lens matches on the path it is given.
   if (!updated.includes("paymentLens(")) {
     // Normalise spacing rather than guess at it: exactly one blank line before
     // the declaration and one after the mount, whatever the file had. `\r?` so
@@ -496,7 +523,7 @@ function applyEdits(
     const body = `${LENS_DECLARATION.replace(
       "paymentLens()",
       `paymentLens({ routes: { ${routeMapEntry(route, price)} } })`,
-    )}\n${MOUNT_LINE}\n\n`;
+    )}\napp.use(lens.middleware);\n\n`;
     updated = `${before}${body}${updated.slice(routeMatch.routeStart)}`;
   }
 

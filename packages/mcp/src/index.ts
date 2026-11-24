@@ -358,7 +358,15 @@ function emitFailure(
   );
 }
 
-/** A completed tool call, settled or challenged. */
+/**
+ * A completed tool call, settled or challenged.
+ *
+ * `result.isError` has to be checked before the fallback, because "no settle
+ * response and no challenge" is not the same as "settled". The SDK answers a
+ * failed tool call with `{ content: …, isError: true }` and no `_meta`, so the
+ * fallback below reported `payment.settled` for a call that errored — the one
+ * claim an observability layer must not get wrong, since it says money moved.
+ */
 function emitOutcome(
   bus: EventBus,
   baseEvent: (requestId: string, durationMs?: number) => Omit<LensEvent, "type">,
@@ -371,7 +379,7 @@ function emitOutcome(
   const settle = safeExtract(() => extractPaymentResponseFromMeta(result));
 
   if (settle) {
-    emitSettle(bus, baseEvent, requestId, options, settle, durationMs);
+    emitSettle(bus, baseEvent, requestId, settle, durationMs);
     return;
   }
 
@@ -387,9 +395,23 @@ function emitOutcome(
     return;
   }
 
+  // The SDK marks a failed tool call rather than throwing, so a settled event
+  // here would describe a payment that was never taken.
+  if ((result as { isError?: boolean }).isError === true) {
+    bus.emit(
+      makeEvent<LensEvent>({
+        ...baseEvent(requestId, durationMs),
+        type: "payment.failed",
+        reason: textOf(result).slice(0, 200) || "tool call returned an error",
+      } as LensEvent),
+    );
+    return;
+  }
+
   // A tool that ran without a payment and without a challenge: either it is
   // free (a wiring mistake worth seeing) or the SDK settled without attaching
-  // the response. Either way the event records the call.
+  // the response. Either way the event records the call, with an empty txHash
+  // as the visible signal that no settlement was observed.
   bus.emit(
     makeEvent<LensEvent>({
       ...baseEvent(requestId, durationMs),
@@ -399,12 +421,22 @@ function emitOutcome(
   );
 }
 
+/** The text of a tool result, joined, for use as a failure reason. */
+function textOf(result: WrappedToolResult): string {
+  return (result.content ?? [])
+    .filter(
+      (item): item is { type: "text"; text: string } =>
+        item.type === "text" && typeof item.text === "string",
+    )
+    .map(item => item.text)
+    .join(" ");
+}
+
 /** Emit the settlement event, splitting success from a reported failure. */
 function emitSettle(
   bus: EventBus,
   baseEvent: (requestId: string, durationMs?: number) => Omit<LensEvent, "type">,
   requestId: string,
-  options: PaidToolOptions,
   settle: WireSettleResponse,
   durationMs: number,
 ): void {
@@ -433,7 +465,6 @@ function emitSettle(
       findings,
     } as LensEvent),
   );
-  void options;
 }
 
 /**

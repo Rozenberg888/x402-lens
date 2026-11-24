@@ -15,6 +15,9 @@ x402.config.local.json
 *.log
 npm-debug.log*
 coverage/
+# Ad-hoc coverage reports written while measuring a package. `git add -A` picked
+# one up once already; the default `coverage/` rule does not cover them.
+.cov*/
 
 # Mutation testing output — generated, large, and rebuilt on demand.
 reports/

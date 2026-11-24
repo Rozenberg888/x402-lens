@@ -17,15 +17,11 @@
 import { describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
 import express from "express";
 import { ConfigError, resolveConfig } from "@x402-lens/core";
 import { paymentLens } from "@x402-lens/express";
 import { startMockFacilitator } from "./helpers/mockFacilitator.js";
-
-const ROOT = resolve(import.meta.dirname, "..");
-const CLI = join(ROOT, "packages", "cli", "dist", "index.js");
+import { runCli, spawnCli } from "./helpers/runCli.js";
 
 const BASE = {
   facilitatorUrl: "https://facilitator.example.com",
@@ -158,32 +154,6 @@ describe("audit: an invalid price never reaches a buyer as HTTP 500", () => {
   });
 });
 
-/**
- * Run the built CLI and capture stdout, stderr and exit code.
- *
- * The defects below were in argument handling and process lifecycle, so they are
- * only visible by executing the binary — a unit test on `main()` would not show
- * that a stack trace reached stderr.
- */
-function runCli(args: string[], timeoutMs = 20_000): Promise<{
-  code: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return new Promise(resolvePromise => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", chunk => (stdout += String(chunk)));
-    child.stderr.on("data", chunk => (stderr += String(chunk)));
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.on("close", code => {
-      clearTimeout(timer);
-      resolvePromise({ code: code ?? 1, stdout, stderr });
-    });
-  });
-}
-
 describe("audit: inspect reports a bad URL as a message, not a crash", () => {
   it("explains that the URL needs a scheme", async () => {
     const result = await runCli(["inspect", "not-a-url"]);
@@ -225,11 +195,7 @@ describe("audit: watch --interval exits on a signal", () => {
   it("stops on SIGINT instead of running forever", async () => {
     // The loop was `for (;;)` with no handler: Ctrl+C killed the process
     // wherever it was, with no confirmation and no chance to see the last result.
-    const child = spawn(
-      process.execPath,
-      [CLI, "watch", "http://127.0.0.1:1", "--interval", "1", "--timeout", "300"],
-      { cwd: ROOT },
-    );
+    const child = spawnCli(["watch", "http://127.0.0.1:1", "--interval", "1", "--timeout", "300"]);
     const closed = new Promise<number>(done => child.on("close", code => done(code ?? 1)));
 
     // Let at least one check run, then interrupt.

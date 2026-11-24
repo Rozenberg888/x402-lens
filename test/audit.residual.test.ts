@@ -10,16 +10,13 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
 import express from "express";
 import { mergeCorsHeaders, pathMatchesPattern } from "@x402-lens/server";
 import { paymentLens } from "@x402-lens/express";
 import { checkEndpoint } from "../packages/cli/src/commands/watch.js";
 import { startMockFacilitator } from "./helpers/mockFacilitator.js";
+import { runCli } from "./helpers/runCli.js";
 
-const ROOT = resolve(import.meta.dirname, "..");
-const CLI = join(ROOT, "packages", "cli", "dist", "index.js");
 const EVM = "eip155:84532";
 const PAY_TO = "0x209693Bc6afc0C5328bA36FaF03C514EF312287C";
 
@@ -109,25 +106,6 @@ describe("audit: a corrupt challenge header is not 'paywall gone'", () => {
   }, 20_000);
 });
 
-/** Run the built CLI and capture everything. */
-function runCli(args: string[], timeoutMs = 15_000): Promise<{
-  code: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return new Promise(resolvePromise => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", chunk => (stdout += String(chunk)));
-    child.stderr.on("data", chunk => (stderr += String(chunk)));
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.on("close", code => {
-      clearTimeout(timer);
-      resolvePromise({ code: code ?? 1, stdout, stderr });
-    });
-  });
-}
 
 describe("audit: --json holds on every error path", () => {
   it("emits JSON when explain cannot read its input file", async () => {

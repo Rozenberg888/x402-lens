@@ -47,6 +47,13 @@ export default {
   },
   timeoutMS: 20000,
   concurrency: 4,
-  // Generated output and test files are not inputs to the product.
-  ignorePatterns: ["dist", "coverage", "reports", "test/fixtures/recorded"],
+// Generated output and test files are not inputs to the product.
+//
+// `test/fixtures/recorded` is deliberately NOT ignored. It was, and Stryker's
+// ignore pattern also skips copying, so the sandbox had no fixtures and
+// `contract.recorded.test.ts` died at import with ENOENT — the dry run failed
+// before a single mutant ran, which is why this package's adapters had never been
+// mutation-tested. Recorded fixtures are inputs: the whole point is that they do
+// not change between runs.
+ignorePatterns: ["dist", "coverage", "reports"],
 };

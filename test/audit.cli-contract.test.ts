@@ -11,12 +11,8 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
 import { flagEnabled, parseArgs } from "../packages/cli/src/args.js";
-
-const ROOT = resolve(import.meta.dirname, "..");
-const CLI = join(ROOT, "packages", "cli", "dist", "index.js");
+import { runCli } from "./helpers/runCli.js";
 
 describe("args: boolean flags do not consume the next token", () => {
   it("keeps the URL positional after --json", () => {
@@ -89,26 +85,6 @@ describe("args: -- ends flag parsing", () => {
     expect(parsed.errors).toEqual([]);
   });
 });
-
-/** Run the built CLI and capture everything. */
-function runCli(args: string[], timeoutMs = 15_000): Promise<{
-  code: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return new Promise(resolvePromise => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", chunk => (stdout += String(chunk)));
-    child.stderr.on("data", chunk => (stderr += String(chunk)));
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.on("close", code => {
-      clearTimeout(timer);
-      resolvePromise({ code: code ?? 1, stdout, stderr });
-    });
-  });
-}
 
 describe("cli: invalid numeric arguments are usage errors", () => {
   it("rejects --timeout with a non-number as exit 2", async () => {

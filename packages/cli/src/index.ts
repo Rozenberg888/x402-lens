@@ -591,9 +591,18 @@ function parseHeaderFlags(argv: string[]): {
   return { headers, errors };
 }
 
+/**
+ * Whether this module is the process entry point.
+ *
+ * Checked by suffix rather than by comparing against `import.meta.url` so the
+ * packaged binary still works through npm's shim. It has to list the TypeScript
+ * extensions too: `node --import tsx packages/cli/src/index.ts` is how the tests
+ * invoke the CLI, and a check that only knew `index.js` made that run exit 0
+ * having printed nothing — a silent no-op that looked like a passing command.
+ */
 const isDirectRun =
   process.argv[1] !== undefined &&
-  (process.argv[1].endsWith("x402-lens") || process.argv[1].endsWith("index.js"));
+  /(?:^|[\\/])(?:x402-lens|index\.(?:js|mjs|cjs|ts|mts|cts))$/.test(process.argv[1]);
 
 if (isDirectRun) {
   main(process.argv.slice(2))

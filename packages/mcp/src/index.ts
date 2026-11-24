@@ -383,7 +383,8 @@ function emitOutcome(
         type: "payment.required",
         findings: diagnose({ paymentRequired: challenge as never, now: startedAt }),
       } as LensEvent),
-    );    return;
+    );
+    return;
   }
 
   // A tool that ran without a payment and without a challenge: either it is

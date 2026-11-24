@@ -861,6 +861,55 @@ export function assertLensConfig(config: LensConfig): void {
   }
   for (const network of config.networks) assertCaip2(network);
 
+  // `networks` is authoritative and `network` is documented as `networks[0]`.
+  // A hand-built config where they disagree advertises one chain while every
+  // consumer reads the other, so the mismatch is refused here rather than
+  // discovered when a payment lands on the wrong network.
+  if (config.network !== config.networks[0]) {
+    throw new ConfigError(
+      "network",
+      `network is ${JSON.stringify(config.network)} but networks[0] is ${JSON.stringify(config.networks[0])}. They must agree: the challenge advertises networks, and events and defaults read network.`,
+    );
+  }
+
+  // A `payToByNetwork` entry for a network that is not advertised is a silent
+  // misconfiguration: the operator believes that chain is for sale, and it is
+  // not. Measured before this check: a Solana address in the map with only EVM in
+  // `networks` was accepted, so an EVM-only deployment looked multi-chain.
+  for (const network of Object.keys(config.payToByNetwork ?? {})) {
+    if (network === "*") continue;
+    if (!config.networks.includes(network)) {
+      throw new ConfigError(
+        "payToByNetwork",
+        `payToByNetwork has an address for ${describeNetwork(network)}, which is not in networks ${JSON.stringify(config.networks)}. Add the network to networks, or remove the address — as written, ${network} is never advertised.`,
+      );
+    }
+  }
+
+  // The same bounds `resolveConfig` applies. Without them a hand-built config
+  // reaches the wire with a negative window (clients refuse to sign) or crashes
+  // the SDK constructor with a RangeError.
+  if (!Number.isInteger(config.maxTimeoutSeconds) || config.maxTimeoutSeconds <= 0) {
+    throw new ConfigError(
+      "maxTimeoutSeconds",
+      `maxTimeoutSeconds must be a positive integer number of seconds, got ${JSON.stringify(config.maxTimeoutSeconds)}.`,
+    );
+  }
+  if (config.facilitatorTimeoutMs !== undefined) {
+    if (!Number.isInteger(config.facilitatorTimeoutMs) || config.facilitatorTimeoutMs <= 0) {
+      throw new ConfigError(
+        "facilitatorTimeoutMs",
+        `facilitatorTimeoutMs must be a positive integer, got ${String(config.facilitatorTimeoutMs)}.`,
+      );
+    }
+    if (config.facilitatorTimeoutMs > MAX_TIMEOUT_MS) {
+      throw new ConfigError(
+        "facilitatorTimeoutMs",
+        `facilitatorTimeoutMs must be at most ${MAX_TIMEOUT_MS} (about 24.8 days), got ${String(config.facilitatorTimeoutMs)}. The SDK enforces this limit when the facilitator client is constructed.`,
+      );
+    }
+  }
+
   if (!config.routes || config.routes.length === 0) {
     throw new ConfigError(
       "routes",
@@ -875,6 +924,12 @@ export function assertLensConfig(config: LensConfig): void {
       );
     }
     assertPath(route.path, `${route.method} ${route.path}`, index);
+    // A hand-built route can carry any method string, and an unrecognised one
+    // never matches a request: the handler runs unpaid with no event, which is
+    // the same defect `resolveConfig` refuses. The normalised value is written
+    // back so a lowercase `get` matches a request, as it does through
+    // `resolveConfig`.
+    (route as { method: string }).method = assertMethod(route.method, `routes[${index}]`);
     // Re-validate price/scheme/flow so a hand-built LensConfig cannot skip the
     // checks resolveConfig ran through normalisePrice / metadata.
     const normalised = normalisePrice(route.price, `routes[${index}]`);

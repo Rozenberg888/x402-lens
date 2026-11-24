@@ -520,7 +520,13 @@ export function baseEvent(
   const context = currentRequestContext();
   return {
     ts: new Date().toISOString(),
-    requestId: context?.requestId ?? randomUUID(),
+    // Inside a request both adapters bind the ALS context, so every event of one
+    // exchange shares its id. Hooks registered directly on the returned `server`
+    // can fire outside that binding; such an event gets a `unbound:` id rather
+    // than a plain UUID, because a bare UUID looks correlatable and is not —
+    // an operator searching for one request would never find it, and would not
+    // know why. The prefix makes the gap visible and greppable.
+    requestId: context?.requestId ?? `unbound:${randomUUID()}`,
     route: `${context?.method ?? "GET"} ${context?.path ?? "/"}`,
     scheme: requirements.scheme ?? "exact",
     network: requirements.network ?? config.network,

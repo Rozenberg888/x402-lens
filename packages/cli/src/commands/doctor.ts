@@ -7,6 +7,7 @@
  */
 
 import {
+  CONFIG_FILE_FIELD,
   ConfigError,
   WELL_KNOWN_NETWORKS,
   describeNetwork,
@@ -47,6 +48,26 @@ interface SupportedResponse {
   kinds?: Array<{ x402Version?: number; scheme?: string; network?: string }>;
   extensions?: string[];
   signers?: Record<string, string[]>;
+}
+
+/**
+ * Whether a `loadConfig` failure means the config file itself is unusable.
+ *
+ * `loadConfig` throws `ConfigError` for both "no configuration was supplied" and
+ * "the configuration file cannot be parsed", and the two need opposite handling in
+ * `doctor`: the first is answered by overrides, the second is a deploy blocker
+ * that overrides hide.
+ *
+ * The distinction is structural, not textual: `ConfigError.field` names the field
+ * at fault, and the file reader attributes every parse failure to the file itself.
+ * Matching on the message would break the moment the wording changed — and the
+ * wording of these messages is deliberately verbose, so it changes.
+ *
+ * @param error - The error `loadConfig` threw
+ * @returns True when a file exists but cannot be read as configuration
+ */
+function isMalformedConfigError(error: Error): boolean {
+  return error instanceof ConfigError && error.field === CONFIG_FILE_FIELD;
 }
 
 /**
@@ -104,6 +125,24 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   const network = networks[0] ?? "";
 
   if (!config) {
+    // Only a malformed config file is a deploy blocker that overrides cannot
+    // stand in for. "facilitatorUrl is required" means the configuration was
+    // never supplied — which is exactly the case the overrides exist for.
+    //
+    // Before this, supplying `--facilitator` turned `FAIL config: <parse error>`
+    // into `ok config: … not checked`, so a truncated `x402.config.json` ended in
+    // "All checks passed": the gate flipped from fail to pass by adding a flag
+    // unrelated to the broken file.
+    const malformedFile = configError !== undefined && isMalformedConfigError(configError);
+    if (malformedFile && configError) {
+      checks.push({
+        name: "config",
+        ok: false,
+        detail: `${configError.message} Overrides cannot stand in for it: the server loads this file at startup and will fail the same way.`,
+      });
+      return finish(checks);
+    }
+
     if (!facilitatorUrl || !network) {
       checks.push({
         name: "config",
@@ -112,28 +151,37 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
       });
       return finish(checks);
     }
-    // Overrides supplied enough to probe the facilitator; the rest is reported.
+    // Configuration was simply absent; overrides supplied enough to probe the
+    // facilitator. The rest is genuinely not available to check.
     checks.push({
       name: "config",
       ok: true,
       detail:
-        "Probing with facilitator and network overrides. Full configuration (payTo, routes) was not loaded, so it was not checked.",
+        "No configuration was found; probing with facilitator and network overrides. Full configuration (payTo, routes) was not loaded, so it was not checked.",
     });
   }
 
-  if (!isCaip2(network)) {
-    const suggestion = suggestCaip2(network);
-    checks.push({
-      name: "network format",
-      ok: false,
-      detail: `"${network}" is not CAIP-2.${suggestion ? ` Use "${suggestion}".` : ""}`,
-    });
+  // Every network, not just the first.
+  //
+  // Checking `networks[0]` and then attributing a later entry's invalid id to the
+  // facilitator ("These configured networks are not listed for x402Version 2")
+  // sent the operator to debug facilitator support for a locally malformed id.
+  const malformed = networks.filter(entry => !isCaip2(entry));
+  if (malformed.length > 0) {
+    for (const entry of malformed) {
+      const suggestion = suggestCaip2(entry);
+      checks.push({
+        name: "network format",
+        ok: false,
+        detail: `"${entry}" is not CAIP-2.${suggestion ? ` Use "${suggestion}".` : ""}`,
+      });
+    }
     return finish(checks);
   }
   checks.push({
     name: "network format",
     ok: true,
-    detail: describeNetwork(network),
+    detail: networks.length > 1 ? networks.map(describeNetwork).join(", ") : describeNetwork(network),
   });
 
   if (config) {

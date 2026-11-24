@@ -278,7 +278,24 @@ export async function main(argv: string[]): Promise<number> {
             );
           }
           state = nextState(results, state);
-          if (statePath) await writeWatchState(statePath, state);
+          if (statePath) {
+            // A monitor must outlive its own bookkeeping.
+            //
+            // `readWatchState` deliberately swallows every error so a corrupt
+            // file cannot take the monitor down, but the write side had no such
+            // tolerance: a read-only volume, a full disk or a removed parent
+            // killed the process with a bare ENOENT. Losing the state only
+            // means the next run has no baseline; losing the monitor means no
+            // alerts at all, which is the worse failure by far.
+            try {
+              await writeWatchState(statePath, state);
+            } catch (error) {
+              const asError = error instanceof Error ? error : new Error(String(error));
+              process.stderr.write(
+                `warning: could not save watch state to ${statePath}: ${asError.message}. Checks continue; the next run will have no baseline to compare against.\n`,
+              );
+            }
+          }
 
           const drifted = results.filter(result => result.drift.length > 0);
           const failed = results.filter(result => !result.ok);

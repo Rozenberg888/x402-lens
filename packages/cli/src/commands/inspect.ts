@@ -16,6 +16,60 @@ import {
 } from "@x402-lens/core";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 
+/**
+ * Largest response body searched for a mirrored challenge.
+ *
+ * A challenge is a few hundred bytes to a few kilobytes; this leaves room for a
+ * verbose one and stops short of anything that would be a payload rather than a
+ * challenge. Without it, `inspect` against an unprotected endpoint — the normal
+ * case — buffered the whole body into a string.
+ */
+const MAX_BODY_BYTES = 1_000_000;
+
+/**
+ * Read at most `limit` bytes of a response body as UTF-8.
+ *
+ * Streams rather than calling `text()` so the cap applies as data arrives: a
+ * server that ignores the abort signal cannot make this allocate more than the
+ * limit.
+ *
+ * @param response - Response to read
+ * @param limit - Maximum bytes to keep
+ * @returns The decoded prefix, at most `limit` bytes
+ */
+async function readBoundedText(response: Response, limit: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const remaining = limit - total;
+      if (value.byteLength >= remaining) {
+        chunks.push(value.subarray(0, remaining));
+        total = limit;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    // Releasing the lock lets the body be cancelled; without it an abandoned
+    // stream keeps the socket open until the agent's timeout.
+    await reader.cancel().catch(() => {});
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
 export interface InspectOptions {
   url: string;
   method?: string;
@@ -82,7 +136,14 @@ export async function inspectEndpoint(options: InspectOptions): Promise<InspectR
 
   if (!paymentRequired) {
     // Our middleware mirrors the challenge into the body; other servers may too.
-    const text = await response.text().catch(() => "");
+    //
+    // Bounded, because `inspect` is pointed at arbitrary URLs including
+    // unprotected ones — the normal "is this route protected" case — which can
+    // be a large download or an endless stream. The abort bounds time, not
+    // bytes, so without a cap a 15-second window can materialise hundreds of
+    // megabytes to search for a challenge that is not there. A challenge is well
+    // under this; anything larger is not one.
+    const text = await readBoundedText(response, MAX_BODY_BYTES).catch(() => "");
     const fromBody = extractChallengeFromBody(text);
     if (fromBody) {
       paymentRequired = fromBody;

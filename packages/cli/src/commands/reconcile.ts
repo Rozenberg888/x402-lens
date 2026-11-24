@@ -67,7 +67,12 @@ const DEFAULT_RPC: Record<string, string> = {
   "eip155:8453": "https://mainnet.base.org",
   "eip155:84532": "https://sepolia.base.org",
   "eip155:11155111": "https://ethereum-sepolia.publicnode.com",
-  "solana:5eykt4Usfv8P8NJdTREpY1vzqKqZKvdp": "https://api.mainnet-beta.solana.com",
+  // Canonical Base58 form of the Solana mainnet genesis hash, capital `F`. The
+  // previous key had a lowercase `v`, so a correct CAIP-2 id missed the table
+  // and `reconcile` refused with "No default RPC for Solana mainnet. Pass --rpc"
+  // — telling the user to override the one network the table exists to cover —
+  // while the misspelt id was accepted and hit mainnet.
+  "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "https://api.mainnet-beta.solana.com",
   "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "https://api.devnet.solana.com",
 };
 

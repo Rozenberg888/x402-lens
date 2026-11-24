@@ -79,6 +79,7 @@ export type {
   RoutesInput,
 } from "./config.js";
 export {
+  CONFIG_FILE_FIELD,
   ConfigError,
   assertLensConfig,
   loadConfig,

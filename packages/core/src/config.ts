@@ -452,29 +452,49 @@ export async function loadConfig(
     );
   }
 
+  // Precedence is explicit option → environment → file, as the README and the
+  // docstring both state.
+  //
+  // The code used to hand the file value straight to `resolveConfig` when the
+  // option was absent, which made `fileConfig.X ?? env.X` the effective order —
+  // the file beat the environment. A committed `x402.config.json` therefore
+  // silently overrode `X402_FACILITATOR_URL`, `X402_NETWORK` and
+  // `X402_MAX_TIMEOUT_SECONDS` in the deployment, so a staging deploy pointing at
+  // a testnet file paid out on mainnet. A test asserted the file-beats-env order;
+  // it was pinning the bug, and is corrected with this change.
+  const env = options.env ?? process.env;
+  const fromEnvOrFile = <T>(envName: string, fileValue: T | undefined): T | undefined =>
+    (env[envName]?.trim().length ?? 0) > 0 ? undefined : fileValue;
+
   return resolveConfig({
     facilitatorUrl:
-      pickString(options.facilitatorUrl) ?? pickString(fileConfig.facilitatorUrl),
+      pickString(options.facilitatorUrl) ??
+      fromEnvOrFile("X402_FACILITATOR_URL", pickString(fileConfig.facilitatorUrl)),
     ...(options.network !== undefined
       ? { network: options.network }
       : fileConfig.network !== undefined
-        ? { network: fileConfig.network }
+        ? { network: fromEnvOrFile("X402_NETWORK", fileConfig.network) }
         : {}),
     ...(options.networks !== undefined
       ? { networks: options.networks }
       : fileConfig.networks !== undefined
-        ? { networks: fileConfig.networks }
+        ? { networks: fromEnvOrFile("X402_NETWORKS", fileConfig.networks) }
         : {}),
     ...(options.payTo !== undefined
       ? { payTo: options.payTo }
       : fileConfig.payTo !== undefined
-        ? { payTo: fileConfig.payTo }
+        ? { payTo: fromEnvOrFile("X402_PAY_TO", fileConfig.payTo) }
         : {}),
     routes: options.routes ?? fileConfig.routes,
     ...(options.maxTimeoutSeconds !== undefined
       ? { maxTimeoutSeconds: options.maxTimeoutSeconds }
       : fileConfig.maxTimeoutSeconds !== undefined
-        ? { maxTimeoutSeconds: fileConfig.maxTimeoutSeconds }
+        ? {
+            maxTimeoutSeconds: fromEnvOrFile(
+              "X402_MAX_TIMEOUT_SECONDS",
+              fileConfig.maxTimeoutSeconds,
+            ),
+          }
         : {}),
     ...(options.facilitatorHeaders !== undefined
       ? { facilitatorHeaders: options.facilitatorHeaders }
@@ -482,7 +502,12 @@ export async function loadConfig(
     ...(options.facilitatorTimeoutMs !== undefined
       ? { facilitatorTimeoutMs: options.facilitatorTimeoutMs }
       : fileConfig.facilitatorTimeoutMs !== undefined
-        ? { facilitatorTimeoutMs: fileConfig.facilitatorTimeoutMs }
+        ? {
+            facilitatorTimeoutMs: fromEnvOrFile(
+              "X402_FACILITATOR_TIMEOUT_MS",
+              fileConfig.facilitatorTimeoutMs,
+            ),
+          }
         : {}),
     env: options.env,
   });
@@ -1227,20 +1252,32 @@ interface FileConfig extends LensConfigInput {
   routes?: RoutesInput;
 }
 
+/**
+ * `ConfigError.field` used when the configuration *file* is unusable.
+ *
+ * The file reader attributes every parse failure to this name so a caller can
+ * tell "there was no configuration" (which environment overrides can answer)
+ * apart from "there was a configuration and it is broken" (which they cannot).
+ * Exported because that distinction is load-bearing in `x402-lens doctor`.
+ */
+export const CONFIG_FILE_FIELD = "x402.config.json";
+
 async function readConfigFile(cwd: string): Promise<FileConfig> {
-  const path = `${cwd}/x402.config.json`;
+  const path = `${cwd}/${CONFIG_FILE_FIELD}`;
   let contents: string;
   try {
     contents = await readFile(path, "utf8");
   } catch {
+    // Absent or unreadable is not the same as malformed: there may simply be no
+    // file, which is the documented way to configure entirely from env.
     return {};
   }
   try {
     return JSON.parse(contents) as FileConfig;
   } catch (error) {
     throw new ConfigError(
-      "x402.config.json",
-      `x402.config.json is not valid JSON: ${(error as Error).message}`,
+      CONFIG_FILE_FIELD,
+      `${CONFIG_FILE_FIELD} is not valid JSON: ${(error as Error).message}`,
     );
   }
 }

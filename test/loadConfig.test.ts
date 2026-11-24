@@ -237,26 +237,31 @@ describe("precedence: explicit option beats file", () => {
   });
 });
 
-describe("precedence: file beats environment", () => {
-  it("uses the file facilitator over the env var", async () => {
+describe("precedence: environment beats file", () => {
+  // The documented order is explicit option → environment → file, and the README
+  // says so. The code used to invert the last two, and these tests asserted the
+  // inversion — so a committed `x402.config.json` silently overrode
+  // `X402_FACILITATOR_URL`, `X402_NETWORK` and `X402_MAX_TIMEOUT_SECONDS` in the
+  // deployment. A staging deploy pointing at a testnet file paid out on mainnet.
+  it("uses the env facilitator over the file", async () => {
     const dir = await tempDir(fileConfig());
     const config = await loadConfig({
       cwd: dir,
       env: { X402_FACILITATOR_URL: "https://env.example/facilitator" },
     });
-    expect(config.facilitatorUrl).toBe(FACILITATOR);
+    expect(config.facilitatorUrl).toBe("https://env.example/facilitator");
   });
 
-  it("uses the file network over the env var", async () => {
+  it("uses the env network over the file", async () => {
     const dir = await tempDir(fileConfig({ network: "eip155:8453" }));
     const config = await loadConfig({ cwd: dir, env: { X402_NETWORK: EVM } });
-    expect(config.network).toBe("eip155:8453");
+    expect(config.network).toBe(EVM);
   });
 
-  it("uses the file payTo over the env var", async () => {
+  it("uses the env payTo over the file", async () => {
     const dir = await tempDir(fileConfig());
     const config = await loadConfig({ cwd: dir, env: { X402_PAY_TO: OTHER_ADDRESS } });
-    expect(config.payTo).toBe(ADDRESS);
+    expect(config.payTo).toBe(OTHER_ADDRESS);
   });
 
   it("uses the file routes over X402_PRICE__ variables", async () => {
@@ -268,10 +273,10 @@ describe("precedence: file beats environment", () => {
     expect(config.routes[0]?.path).toBe("/weather");
   });
 
-  it("uses the file timeout over the env var", async () => {
+  it("uses the env timeout over the file", async () => {
     const dir = await tempDir(fileConfig({ maxTimeoutSeconds: 120 }));
     const config = await loadConfig({ cwd: dir, env: { X402_MAX_TIMEOUT_SECONDS: "30" } });
-    expect(config.maxTimeoutSeconds).toBe(120);
+    expect(config.maxTimeoutSeconds).toBe(30);
   });
 
   it("still applies the env facilitator token when the file has no headers", async () => {

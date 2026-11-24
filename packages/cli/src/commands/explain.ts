@@ -15,7 +15,7 @@ import {
   type WireSettleResponse,
   type WireVerifyResponse,
 } from "@x402-lens/core";
-import { readJsonArgument } from "../input.js";
+import { InputError, readJsonArgument } from "../input.js";
 
 export interface ExplainInput {
   challenge?: string;
@@ -33,6 +33,31 @@ export interface ExplainResult {
 }
 
 /**
+ * Require a decoded argument to be a JSON object.
+ *
+ * `readJsonArgument` accepts any JSON value, and `explain` then casts it to a
+ * wire type. So `--challenge '[]'` — an array, not a challenge — passed the cast,
+ * counted as "challenge: yes" in the header, and produced "The 402 response has
+ * no accepts[] entries … Configure at least one route": advice about a server
+ * that was never described. Any JSON that is not an object is a wrong argument,
+ * so it is rejected as such.
+ *
+ * @param value - The decoded argument
+ * @param label - Argument name, used in the error
+ * @returns The same value, typed as an object bag
+ * @throws {InputError} When the value is not a JSON object
+ */
+function asObject(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    const kind = value === null ? "null" : Array.isArray(value) ? "an array" : typeof value;
+    throw new InputError(
+      `${label} must be a JSON object describing the ${label.slice(2)}, but it is ${kind}. Pass the header value verbatim, or the JSON object, or @file.`,
+    );
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
  * Diagnose a captured exchange.
  *
  * @param input - Raw arguments, each JSON / base64 / `@file`
@@ -40,16 +65,28 @@ export interface ExplainResult {
  */
 export async function explainPayment(input: ExplainInput): Promise<ExplainResult> {
   const paymentRequired = input.challenge
-    ? ((await readJsonArgument(input.challenge, "--challenge")) as WirePaymentRequired)
+    ? (asObject(
+        await readJsonArgument(input.challenge, "--challenge"),
+        "--challenge",
+      ) as unknown as WirePaymentRequired)
     : undefined;
   const paymentPayload = input.payment
-    ? ((await readJsonArgument(input.payment, "--payment")) as WirePaymentPayload)
+    ? (asObject(
+        await readJsonArgument(input.payment, "--payment"),
+        "--payment",
+      ) as unknown as WirePaymentPayload)
     : undefined;
   const verifyResponse = input.verify
-    ? ((await readJsonArgument(input.verify, "--verify")) as WireVerifyResponse)
+    ? (asObject(
+        await readJsonArgument(input.verify, "--verify"),
+        "--verify",
+      ) as unknown as WireVerifyResponse)
     : undefined;
   const settleResponse = input.settle
-    ? ((await readJsonArgument(input.settle, "--settle")) as WireSettleResponse)
+    ? (asObject(
+        await readJsonArgument(input.settle, "--settle"),
+        "--settle",
+      ) as unknown as WireSettleResponse)
     : undefined;
 
   if (!paymentRequired && !paymentPayload && !verifyResponse && !settleResponse) {

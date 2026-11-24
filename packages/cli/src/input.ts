@@ -60,17 +60,32 @@ export function parseJsonOrBase64(source: string, label: string): unknown {
   }
 
   throw new InputError(
-    `${label} is neither JSON nor base64-encoded JSON. Pass the header value verbatim, or JSON, or @file.`,
+    isScalarJson(trimmed)
+      ? `${label} is valid JSON but is not an object, so it cannot be a wire value. Pass the JSON object, or the header value verbatim, or @file.`
+      : `${label} is neither JSON nor base64-encoded JSON. Pass the header value verbatim, or JSON, or @file.`,
   );
 }
 
 function tryParseJson(value: string): unknown | undefined {
   const first = value[0];
+  // Only objects, arrays and strings are attempted. A scalar is valid JSON but is
+  // never a wire object, and refusing to parse one here keeps a bare
+  // digit-only base64 string from being read as a number.
   if (first !== "{" && first !== "[" && first !== '"') return undefined;
   try {
     return JSON.parse(value) as unknown;
   } catch {
     return undefined;
+  }
+}
+
+/** Whether a value is valid JSON but of a type no caller can use. */
+function isScalarJson(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed === null || typeof parsed !== "object";
+  } catch {
+    return false;
   }
 }
 

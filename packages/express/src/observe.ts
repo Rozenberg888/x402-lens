@@ -15,7 +15,7 @@
 import type { Response } from "express";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { WirePaymentRequired } from "@x402-lens/core";
-import { bodyFieldsFromChallenge } from "@x402-lens/server";
+import { bodyFieldsFromChallenge, isChallengeStatus } from "@x402-lens/server";
 
 /** Re-exported so this module stays the one place an adapter imports from. */
 export { bodyFieldsFromChallenge };
@@ -94,7 +94,7 @@ export function observePaymentRequired(
     statusCode: unknown,
     ...rest: unknown[]
   ) {
-    if (statusCode === 402) {
+    if (isChallengeStatus(Number(statusCode))) {
       // Some setups pass the header bag to writeHead instead of setHeader.
       for (const candidate of rest) {
         if (candidate && typeof candidate === "object") {
@@ -109,7 +109,7 @@ export function observePaymentRequired(
   } as AnyFunction;
 
   target.json = function patchedJson(this: unknown, body: unknown, ...rest: unknown[]) {
-    if (res.statusCode === 402 && captured) {
+    if (isChallengeStatus(res.statusCode) && captured) {
       emitIfChallenge();
       if (!mirrorBody) return originalJson.call(this, body, ...rest);
       const base =

@@ -262,6 +262,30 @@ export function normaliseRouteInput(
 }
 
 /**
+ * Statuses that can carry a `PAYMENT-REQUIRED` challenge.
+ *
+ * 402 is the paywall. 412 is the SDK's `permit2_allowance_required` flow: the
+ * same challenge, sent because the buyer must grant an allowance first. Gating
+ * strictly on 402 dropped that challenge — no `payment.required` event for the one
+ * flow that asks the buyer to do something extra, so it was invisible in the
+ * event stream.
+ *
+ * Shared by both HTTP adapters: a divergence here would mean the same exchange is
+ * reported in one framework and not the other.
+ */
+export const CHALLENGE_STATUSES: ReadonlySet<number> = new Set([402, 412]);
+
+/**
+ * Whether this status can carry a challenge.
+ *
+ * @param status - HTTP status of the response
+ * @returns True for 402 and 412
+ */
+export function isChallengeStatus(status: number): boolean {
+  return CHALLENGE_STATUSES.has(status);
+}
+
+/**
  * Decode a request path, falling back to the raw value.
  *
  * `decodeURIComponent` throws on a malformed escape such as `%ZZ`. A client can
@@ -361,8 +385,24 @@ export function registerScheme(
 }
 
 /** Which schemes the configured routes actually need. */
-export function schemesInUse(config: LensConfig): Set<PaymentScheme> {
+export function schemesInUse(config: LensConfig, routesConfig?: RoutesConfig): Set<PaymentScheme> {
   const used = new Set<PaymentScheme>();
+
+  // A `routesConfig` override replaces `config.routes` entirely, so its schemes
+  // are the ones that need registering. Reading only `config.routes` left an
+  // override's `upto` route without a scheme, and the server refused to start.
+  if (routesConfig) {
+    for (const entry of Object.values(routesConfig)) {
+      const accepts = (entry as { accepts?: Array<{ scheme?: string }> } | undefined)?.accepts;
+      for (const option of accepts ?? []) {
+        // Only the two this package can register; anything else is the caller's
+        // to supply through `extraSchemes`.
+        if (option.scheme === "upto" || option.scheme === "exact") used.add(option.scheme);
+      }
+    }
+    if (used.size > 0) return used;
+  }
+
   for (const route of config.routes) used.add(route.scheme ?? "exact");
   return used;
 }
@@ -789,7 +829,16 @@ export function buildServers(config: LensConfig, options: LensCommonOptions): Le
   const facilitatorClient = options.facilitatorClient ?? buildFacilitatorClient(config);
 
   const server = new x402ResourceServer(facilitatorClient);
-  const schemes = schemesInUse(config);
+  // Derive schemes from whichever route table will actually run.
+  //
+  // `routesConfig` fully replaces `config.routes`, so reading schemes from
+  // `config.routes` while serving `routesConfig` produced a server with no
+  // matching scheme for any route the override introduced. Measured: a
+  // `routesConfig` containing an `upto` route left `upto` unregistered and
+  // `ready` rejected with `No scheme implementation registered for "upto"` —
+  // so the documented "advanced setups" escape hatch was unusable for anything
+  // but `exact`.
+  const schemes = schemesInUse(config, options.routesConfig);
 
   // Custom schemes first. A caller supplying their own implementation for a
   // network this package does not ship — `xrpl:1` with a custom scheme, or

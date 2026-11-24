@@ -16,7 +16,7 @@
 
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { WirePaymentRequired } from "@x402-lens/core";
-import { bodyFieldsFromChallenge } from "@x402-lens/server";
+import { bodyFieldsFromChallenge, isChallengeStatus } from "@x402-lens/server";
 
 /** Re-exported so this module stays the one place an adapter imports from. */
 export { bodyFieldsFromChallenge };
@@ -50,7 +50,7 @@ export async function observePaymentRequired(
   onChallenge: (paymentRequired: WirePaymentRequired) => void,
   options: ObserveOptions = {},
 ): Promise<Response> {
-  if (response.status !== 402) return response;
+  if (!isChallengeStatus(response.status)) return response;
 
   const raw = response.headers.get("payment-required");
   if (!raw) return response;

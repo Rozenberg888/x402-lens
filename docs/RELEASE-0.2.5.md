@@ -17,19 +17,19 @@ Prerequisite: `npm whoami` must succeed (not 401).
 
 ### Patch lane (already on registry)
 
-Ship together at **0.2.5**:
+Ship together at **0.2.5** (order matters — `npm run publish:npm`):
 
 - [ ] `@x402-lens/core`
+- [ ] `@x402-lens/server` (**first publish** — required because `express@0.2.5` depends on it)
 - [ ] `@x402-lens/express`
 - [ ] `@x402-lens/cli`
 
-`express` must stay self-contained on npm (no unpublished `@x402-lens/server` dependency in the published tarball — `check:pack` / publish guard enforce this).
+`prepublishOnly` on express refuses to upload if `server@0.2.5` is not on the registry yet.
 
-### New packages (optional — only if you intend to support them)
+### New packages (optional — hold unless someone asks)
 
-Unpublished today; first publish is a **new API contract**:
+First publish = new API contract:
 
-- [ ] `@x402-lens/server`
 - [ ] `@x402-lens/hono`
 - [ ] `@x402-lens/mcp`
 

@@ -392,7 +392,7 @@ npm install
 npm run typecheck
 npm test            # unit + integration + chaos + property + load, no network
 npm run test:live   # hits https://x402.org/facilitator
-npm run test:mutation  # mutation score on the core, ~8 minutes
+npm run test:mutation  # mutation score on the core, ~8 minutes (requires Stryker ≥10; `vitest.pool: forks` on Windows)
 npm run fixtures:record # re-record golden fixtures from the real middleware
 npm run example     # accepts x402 payments on localhost:4021
 ```

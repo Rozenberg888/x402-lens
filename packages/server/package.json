@@ -1,6 +1,6 @@
 {
   "name": "@x402-lens/server",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Shared server-side primitives for x402-lens adapters: lifecycle hooks, scheme registration, event shaping",
   "license": "MIT",
   "repository": {
@@ -36,7 +36,7 @@
     "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
   },
   "dependencies": {
-    "@x402-lens/core": "0.2.4",
+    "@x402-lens/core": "0.2.5",
     "@x402/core": "^2.31.0",
     "@x402/evm": "^2.31.0",
     "@x402/mcp": "^2.31.0",

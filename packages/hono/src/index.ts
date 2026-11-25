@@ -322,7 +322,7 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
       } catch (error) {
         const asError = error instanceof Error ? error : new Error(String(error));
         emitMiddlewareError(bus, config, context, asError);
-        c.res = c.json(FACILITATOR_UNAVAILABLE_BODY, 502);
+        c.res = c.json(MIDDLEWARE_ERROR_BODY, 500);
       }
     });
 

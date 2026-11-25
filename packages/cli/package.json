@@ -1,6 +1,6 @@
 {
   "name": "@x402-lens/cli",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "CLI for x402-lens: inspect x402 v2 endpoints, explain failed payments, audit facilitator config",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,7 @@
     "prepublishOnly": "node ../../scripts/check-workspace-versions.mjs && npm --prefix ../.. run typecheck && npm run build && npm --prefix ../.. test"
   },
   "dependencies": {
-    "@x402-lens/core": "0.2.4",
+    "@x402-lens/core": "0.2.5",
     "@x402/core": "^2.31.0"
   },
   "keywords": [

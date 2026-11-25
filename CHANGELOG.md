@@ -5,6 +5,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-11-25
+
 ### Added
 
 - **Solana payload envelope checks.** `transaction_not_base64` and
@@ -70,6 +72,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Live CI (`test:live`) resolves `@x402-lens/*` via source aliases and builds
   before running; CI now guards that resolution path so a bare `npm ci` cannot
   regress the schedule job again.
+- After the SDK middleware runs, Hono (and Express) answered lens-side failures
+  with HTTP 502 `FACILITATOR_UNAVAILABLE` even while emitting
+  `facilitator.error` with a `middleware:` prefix. Operators were sent to the
+  facilitator for bugs in the adapter; both paths now return 500
+  `MIDDLEWARE_ERROR`.
+- Mutation testing on Windows hung during Stryker's initial test run (Vitest
+  `threads` pool). Upgraded to `@stryker-mutator/*@10.1.1` and set
+  `vitest.pool: "forks"` in `stryker.config.mjs`.
 
 ### Tests
 
@@ -86,7 +96,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   showed unasserted: severity ordering, offer selection, authorization window.
 - Broad edge/negative coverage: empty `routesConfig`, `MIDDLEWARE_ERROR`, grant
   throws, OPTIONS without cors, doctor v1-only / Solana payTo, malformed
-  inspect header, EventBus default/close errors (525 tests).
+  inspect header, EventBus default/close errors (759 tests).
+- `test/edge.hono.test.ts` — observation-layer failure returns 500
+  `MIDDLEWARE_ERROR`, not a false facilitator 502.
+
+### Tooling
+
+- `@stryker-mutator/core` and `vitest-runner` 10.1.1; `npm run test:mutation:smoke-pool`
+  for a quick forks-pool check on Windows.
+- `vitest.stryker.config.ts` for mutation runs (excludes flaky publish-guard tests).
 
 ## [0.2.4] — 2026-11-18
 

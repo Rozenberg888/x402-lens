@@ -15,7 +15,8 @@
 import { createAdaptorServer } from "@hono/node-server";
 import { Hono } from "hono";
 import type { AddressInfo } from "node:net";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import * as honoObserve from "../packages/hono/src/observe.js";
 import type { LensEvent } from "@x402-lens/core";
 import { ConfigError } from "@x402-lens/core";
 import { paymentLens, type PaymentLensOptions } from "@x402-lens/hono";
@@ -216,6 +217,31 @@ describe("hono edge: middleware failure classification", () => {
       code: "MIDDLEWARE_ERROR",
     });
     expect(harness.handlerCalls.count).toBe(0);
+  });
+
+  it("answers 500 MIDDLEWARE_ERROR when payment observation explodes after the SDK runs", async () => {
+    const facilitator = await startMockFacilitator({ network: NETWORK });
+    started.push(() => facilitator.close());
+
+    const harness = await startServer({ facilitatorUrl: facilitator.url });
+    await harness.lens.ready;
+
+    const spy = vi
+      .spyOn(honoObserve, "observePaymentRequired")
+      .mockRejectedValue(new Error("observe exploded"));
+
+    try {
+      const response = await fetch(`${harness.baseUrl}/weather`);
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: "internal_error",
+        code: "MIDDLEWARE_ERROR",
+      });
+      expect(harness.handlerCalls.count).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

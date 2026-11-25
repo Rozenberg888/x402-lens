@@ -11,18 +11,18 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ## Where the product actually is
 
-Measured 2026-11-20 from the npm registry and this repository. Numbers, not
-impressions — the previous version of this file contained a claim that
-`@x402/fastify` and `@x402/hono` did not exist, which had been false for weeks
-and blocked the most valuable work in Stage 4.
+Measured **2026-11-25** from this repository; npm download figures from
+**2026-11-20** (registry; refresh before quoting externally).
 
 | | State |
 | --- | --- |
-| Packages | 5: `core`, `server`, `express`, `hono`, `cli` |
-| Published on npm | `0.2.4` for `core`/`express`/`cli`. `server` and `hono` are unpublished |
-| Tests | 427 passing, plus mutation testing at 78% on the findings engine |
+| Packages | 6 workspaces: `core`, `server`, `express`, `hono`, `mcp`, `cli` |
+| Published on npm | `0.2.4` for `core`/`express`/`cli`. `server`, `hono`, `mcp` unpublished |
+| Version in repo | `0.2.5` (tag/publish pending — see `docs/RELEASE-0.2.5.md`) |
+| Tests | **759** passing (`npm test`, 2026-11-25) |
+| Mutation | Stryker **10.1.1**, `pool: "forks"`, `ignoreStatic` — **76.10%** (2026-11-25, ~25 min) |
 | Frameworks | Express 4/5 and Hono 4, sharing one payment path via `@x402-lens/server` |
-| Schemes | `exact`, `upto` |
+| Schemes | `exact`, `upto`, plus `extraSchemes` |
 | Diagnostics | EVM and shallow Solana; `reconcile` for `settlement_pending` |
 
 ### Market position, honestly
@@ -55,18 +55,16 @@ Published and adopted are different problems, and only the second one is real.
 Publishing gives availability; it does not create demand. A new adapter nobody
 asked for does not become wanted by appearing in `npm search`.
 
-- [ ] **Patch 0.2.5 for what already shipped.** `@x402-lens/express@0.2.4` is
-      public and contains two real, if small, defects fixed locally: a `grant`
-      callback returning a long string bypassed the 200-character cap on
-      `reason` (only thrown errors were truncated), and the
-      unsupported-namespace message advises calling `server.register(...)`, which
-      is impossible from where that error is thrown. Neither breaks a payment;
-      both are wrong in code people have already downloaded. A patch release
-      owes nobody a new promise, which is why this comes before step 2.
+- [~] **Patch 0.2.5 for what already shipped.** Fixes from the `0.2.4` audit
+      (grant `reason` truncation, `extraSchemes` error text, middleware 500 vs
+      false 502) are on `feat/hono-adapter`; workspace version is **0.2.5**.
+      **Remaining:** `npm login`, `npm run release`, publish `core`/`express`/`cli`
+      per `docs/RELEASE-0.2.5.md` (2026-11-25).
 - [ ] **Leave the three new packages unpublished until someone asks.** `server`,
       `hono` and `mcp` have no external users and no API contract. That is fine
       while nobody has them; afterwards every breaking change is somebody else's
       broken deploy. Publishing to feel finished is the opposite of finished.
+      (Still true at 0.2.5 — checklist defaults to patch-only publish.)
 - [ ] **One public artefact.** A failure mode written up with the actual event
       JSON, not a changelog entry. This is what answers "does anyone want the
       Hono or MCP adapter", and it costs nothing but writing. The Argus report
@@ -183,9 +181,10 @@ Not features; places where the package implies more than it does.
 
 ## Test strategy
 
-427 tests, and the parts that matter most are the ones that are not units.
+759 tests, and the parts that matter most are the ones that are not units.
 
-**1. Unit.** Rules engine, config, conformance. Mutation-tested at 78%; the
+**1. Unit.** Rules engine, config, conformance. Mutation-tested (threshold **81%**;
+dry-run verified on Windows with `vitest.pool: "forks"` — 2026-11-25); the
 `accepts[0]` bug in `0.1.0` was a green suite over wrong logic, which is what
 Stryker exists to catch.
 

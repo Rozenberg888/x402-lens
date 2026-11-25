@@ -388,7 +388,7 @@ function buildLens(config: LensConfig, options: PaymentLensOptions): PaymentLens
           const asError = error instanceof Error ? error : new Error(String(error));
           emitMiddlewareError(bus, config, context, asError);
           if (!res.headersSent) {
-            res.status(502).json(FACILITATOR_UNAVAILABLE_BODY);
+            res.status(500).json(MIDDLEWARE_ERROR_BODY);
           } else if (!res.writableEnded) {
             res.end();
           }
